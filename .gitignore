@@ -1,2 +1,2 @@
-nvremoted/cmd/nvremoted
-nvremoted/cmd/nvremoted.exe
+cmd/nvremoted/nvremoted
+cmd/nvremoted/nvremoted.exe
