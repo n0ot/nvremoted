@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	log "github.com/Sirupsen/logrus"
 	"github.com/n0ot/nvremoted"
+	log "github.com/sirupsen/logrus"
 	"github.com/spf13/viper"
 )
 

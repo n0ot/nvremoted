@@ -1,6 +1,6 @@
 package nvremoted
 
-import log "github.com/Sirupsen/logrus"
+import log "github.com/sirupsen/logrus"
 
 // ClientHandler handles messages to and from clients.
 // ClientHandlers can call other ClientHandlers,
