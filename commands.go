@@ -2,6 +2,7 @@ package nvremoted
 
 import (
 	"fmt"
+	"strings"
 
 	log "github.com/Sirupsen/logrus"
 )
@@ -76,8 +77,10 @@ var cmdAddclient commandHandlerFunc = func(server *Server, command *serverComman
 // If the protocol version is not 2, the client will be kicked.
 var cmdProtocolVersion commandHandlerFunc = func(server *Server, command *serverCommand) {
 	if version, ok := command.args["version"].(float64); !ok || version != 2.0 {
-		command.responseChan <- errorMessage("Version unsupported")
-		server.kick(command.client.ID, "Client kicked")
+		command.responseChan <- message(map[string]interface{}{
+			"type": "version_mismatch",
+		})
+		server.kick(command.client.ID, "Version mismatch")
 	}
 }
 
@@ -142,6 +145,15 @@ var cmdJoin commandHandlerFunc = func(server *Server, command *serverCommand) {
 		"type":    "channel_joined",
 		"channel": newChannel.name,
 	})
+
+	channelIsEncrypted := strings.HasPrefix(newChannel.name, "E2E_") && len(newChannel.name) == 68
+	if server.config.WarnIfNotEncrypted && !channelIsEncrypted {
+		command.responseChan <- message(map[string]interface{}{
+			"type":          "motd",
+			"motd":          "Your traffic will pass through this server unencrypted. Please consider upgrading to a version of NVDA Remote that supports end to end encryption.",
+			"force_display": true,
+		})
+	}
 
 	newChannel.members = append(newChannel.members, member)
 	server.clientActiveChannel[command.client.ID] = newChannel.name

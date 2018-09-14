@@ -30,14 +30,15 @@ type Server struct {
 
 // ServerConfig  holds the externally configurable settings for a server.
 type ServerConfig struct {
-	ServerName        string
-	BindAddr          string
-	TimeBetweenPings  time.Duration
-	PingsUntilTimeout int
-	CertFile          string
-	KeyFile           string
-	UseTLS            bool
-	Motd              string
+	ServerName         string
+	BindAddr           string
+	TimeBetweenPings   time.Duration
+	PingsUntilTimeout  int
+	CertFile           string
+	KeyFile            string
+	UseTLS             bool
+	Motd               string
+	WarnIfNotEncrypted bool
 }
 
 // NewServer creates a new server with the specified configuration

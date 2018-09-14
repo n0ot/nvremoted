@@ -21,10 +21,12 @@ type defaultClientHandler struct {
 type initServerClientHandler defaultClientHandler
 
 func (ch initServerClientHandler) Handle(client *Client) string {
-	client.Send <- message(map[string]interface{}{
-		"type": "motd",
-		"motd": ch.server.config.Motd,
-	})
+	if ch.server.config.Motd != "" {
+		client.Send <- message(map[string]interface{}{
+			"type": "motd",
+			"motd": ch.server.config.Motd,
+		})
+	}
 	return relayClientHandler{ch.server}.Handle(client)
 }
 

@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/user"
 	"path"
+	"strings"
 	"time"
 
 	log "github.com/Sirupsen/logrus"
@@ -31,6 +32,7 @@ func init() {
 	viper.SetDefault("tls.useTls", true)
 	viper.SetDefault("timeBetweenPings", 10)
 	viper.SetDefault("pingsUntilTimeout", 2)
+	viper.SetDefault("warnIfNotEncrypted", true)
 	err = viper.ReadInConfig()
 	if err != nil {
 		log.Fatalf("Cannot read configuration: %s\n", err)
@@ -45,14 +47,15 @@ func main() {
 	}
 
 	config := &nvremoted.ServerConfig{
-		BindAddr:          viper.GetString("bindAddr"),
-		TimeBetweenPings:  viper.GetDuration("timeBetweenPings") * time.Second,
-		PingsUntilTimeout: viper.GetInt("pingsUntilTimeout"),
-		ServerName:        viper.GetString("serverName"),
-		Motd:              string(motd),
-		UseTLS:            viper.GetBool("tls.useTls"),
-		CertFile:          os.ExpandEnv(viper.GetString("tls.certFile")),
-		KeyFile:           os.ExpandEnv(viper.GetString("tls.keyFile")),
+		BindAddr:           viper.GetString("bindAddr"),
+		TimeBetweenPings:   viper.GetDuration("timeBetweenPings") * time.Second,
+		PingsUntilTimeout:  viper.GetInt("pingsUntilTimeout"),
+		ServerName:         viper.GetString("serverName"),
+		Motd:               strings.TrimSpace(string(motd)),
+		WarnIfNotEncrypted: viper.GetBool("warnIfNotEncrypted"),
+		UseTLS:             viper.GetBool("tls.useTls"),
+		CertFile:           os.ExpandEnv(viper.GetString("tls.certFile")),
+		KeyFile:            os.ExpandEnv(viper.GetString("tls.keyFile")),
 	}
 
 	server := nvremoted.NewServer(config)
