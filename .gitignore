@@ -1,2 +1,1 @@
-cmd/nvremoted/nvremoted
-cmd/nvremoted/nvremoted.exe
+bin/*

@@ -2,6 +2,7 @@ module github.com/n0ot/nvremoted
 
 require (
 	github.com/BurntSushi/toml v0.3.0 // indirect
+	github.com/magefile/mage v1.4.0
 	github.com/onsi/gomega v1.4.2 // indirect
 	github.com/pkg/errors v0.8.0
 	github.com/pmezard/go-difflib v1.0.0 // indirect
