@@ -2,6 +2,7 @@ package main
 
 import (
 	"flag"
+	"fmt"
 	"io/ioutil"
 	"os"
 	"os/user"
@@ -14,6 +15,9 @@ import (
 	"github.com/spf13/viper"
 )
 
+var Name = "NVRemoted"
+var Version = "unset"
+
 func init() {
 	// Try to get the user's home directory
 	usr, err := user.Current()
@@ -25,7 +29,14 @@ func init() {
 	}
 
 	configFile := flag.String("config", path.Join(usr.HomeDir, ".nvremoted", "conf"), "Location of configuration file")
+	var getVersion bool
+	flag.BoolVar(&getVersion, "version", false, "Print version and exit")
 	flag.Parse()
+
+	if getVersion {
+		fmt.Printf("%s version %s\n", Name, Version)
+		os.Exit(0)
+	}
 
 	viper.SetConfigFile(*configFile)
 	viper.SetConfigType("toml")
@@ -58,6 +69,7 @@ func main() {
 		KeyFile:            os.ExpandEnv(viper.GetString("tls.keyFile")),
 	}
 
+	log.Printf("Starting %s", Name)
 	server := nvremoted.NewServer(config)
 	server.Start()
 }
