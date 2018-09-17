@@ -10,5 +10,19 @@ To use:
     and signed certificates can be gotten from [Let's Encrypt][].
 * Run `nvremoted`
 
+#### Building
+Install [Mage][], then use
+
+    mage build
+
+to build, or
+
+    mage install
+
+to install.
+
+`GOOS` and `GOARCH` work as you'd expect.
+
 [NVDA Remote]: https://www.nvdaremote.com
 [Let's Encrypt]: https://letsencrypt.org
+[Mage]: https://github.com/magefile/mage
