@@ -52,7 +52,7 @@ func mkBin() error {
 	if _, err := os.Stat(outDir); err == nil {
 		return nil
 	}
-	return os.Mkdir(outDir, 0744)
+	return os.Mkdir(outDir, 0755)
 }
 
 func getVars() map[string]string {
@@ -61,7 +61,7 @@ func getVars() map[string]string {
 	}
 
 	vars = make(map[string]string)
-	version, err := sh.Output("git", "rev-parse", "--short", "HEAD")
+	version, err := sh.Output("git", "describe", "--always", "--long", "--dirty")
 	if err != nil {
 		version = "unset"
 	}
