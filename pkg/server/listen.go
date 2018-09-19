@@ -4,6 +4,7 @@ import (
 	"crypto/tls"
 	"log"
 	"net"
+	"time"
 
 	"github.com/pkg/errors"
 )
@@ -49,6 +50,7 @@ func (server *Server) ListenAndServeTLS(addr, certFile, keyFile string) error {
 
 func (srv *Server) acceptClients(listener net.Listener) {
 	var nextID uint64
+	readDeadline := srv.config.TimeBetweenPings * time.Duration(srv.config.PingsUntilTimeout)
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
@@ -60,7 +62,7 @@ func (srv *Server) acceptClients(listener net.Listener) {
 			tcpConn.SetKeepAlivePeriod(srv.config.TimeBetweenPings)
 		}
 
-		client := NewClient(conn, nextID, relayClientHandler{srv})
+		client := NewClient(conn, nextID, relayClientHandler{srv}, readDeadline)
 		nextID++
 
 		remoteAddr, _, err := net.SplitHostPort(conn.RemoteAddr().String())

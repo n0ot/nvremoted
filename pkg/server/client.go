@@ -24,21 +24,21 @@ type Client struct {
 	ID            uint64
 	done          chan struct{} // Closed when client is finished
 	StoppedReason string        // Reason the client was stopped
-	LastSeen      time.Time
+	readDeadline  time.Duration
 }
 
 // NewClient initializes a new client, and
 // calls the given client handler.
 // When the ClientHandler returns,
 // the client will be disconnected.
-func NewClient(conn net.Conn, ID uint64, clientHandler ClientHandler) *Client {
+func NewClient(conn net.Conn, ID uint64, clientHandler ClientHandler, readDeadline time.Duration) *Client {
 	client := &Client{
-		conn:     conn,
-		Send:     make(chan models.Message, sendBuffSize),
-		Recv:     make(chan models.Message),
-		ID:       ID,
-		done:     make(chan struct{}, 1),
-		LastSeen: time.Now(),
+		conn:         conn,
+		Send:         make(chan models.Message, sendBuffSize),
+		Recv:         make(chan models.Message),
+		ID:           ID,
+		done:         make(chan struct{}, 1),
+		readDeadline: readDeadline,
 	}
 
 	// Connect Send/Recv channels to the net.Conn.
@@ -63,6 +63,14 @@ func (client *Client) send(finished chan<- struct{}) {
 	encoder := json.NewEncoder(client.conn)
 
 	for msg := range client.Send {
+		if len(msg) == 0 {
+			if _, err := client.conn.Write([]byte("\n")); err != nil {
+				log.Printf("Error while sending ping to %s: %s", client, err)
+				client.Stop("Send error")
+				break
+			}
+			continue
+		}
 		if err := encoder.Encode(msg); err != nil {
 			log.Printf("Error while serializing message to %s: %s", client, err)
 			client.Stop("Send error")
@@ -85,7 +93,7 @@ func (client *Client) receive() {
 
 	var msg models.Message
 	for !client.Stopped() {
-		client.conn.SetReadDeadline(time.Now().Add(10 * time.Second))
+		client.conn.SetReadDeadline(time.Now().Add(client.readDeadline))
 		msg = nil // Otherwise, new json would be merged into the existing map.
 		if err := decoder.Decode(&msg); err != nil {
 			// If recovering from an error, readers of client.Recv
@@ -96,23 +104,16 @@ func (client *Client) receive() {
 				return
 			}
 			if err, ok := err.(net.Error); ok && err.Timeout() {
-				// We're only using timeouts to give a client receivin no data a chance to clean up
-				// if it was stopped.
-				//
-				// Once the JSON decoder receives an error, it's useless, and we need to make another.
-				decoder = json.NewDecoder(client.conn)
-			} else {
-				log.Printf("Error deserializing message from client: %s", err)
-				client.Stop("Receive error")
+				client.Stop("Client timed out")
 				return
 			}
+			log.Printf("Error deserializing message from client: %s", err)
+			client.Stop("Receive error")
+			return
 		}
 
 		select {
 		case client.Recv <- msg:
-			if msg != nil {
-				client.LastSeen = time.Now()
-			}
 		case <-client.done:
 			break
 		}

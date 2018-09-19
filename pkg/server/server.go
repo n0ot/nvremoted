@@ -55,7 +55,6 @@ func (server *Server) Serve(listener net.Listener) {
 	log.Printf("Starting server with configuration:\n%+v", server.config)
 
 	timeBetweenPings := server.config.TimeBetweenPings
-	pingsUntilTimeout := server.config.PingsUntilTimeout
 
 	// If timeBetweenPings is 0,
 	// the pings chan will remain nil, and the ping handling will never be called.
@@ -84,14 +83,8 @@ func (server *Server) Serve(listener net.Listener) {
 				if client == nil {
 					continue
 				}
-				if pingsUntilTimeout > 0 && time.Since(client.LastSeen) > timeBetweenPings*time.Duration(pingsUntilTimeout) {
-					server.Kick(client.ID, "ping timeout")
-					continue
-				}
 				if resp := server.clientResp[id]; resp != nil {
-					resp <- models.Message(map[string]interface{}{
-						"type": "ping",
-					})
+					resp <- nil // Translated to client as newline
 				}
 			}
 		}
