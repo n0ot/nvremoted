@@ -32,6 +32,9 @@ type Client struct {
 // When the ClientHandler returns,
 // the client will be disconnected.
 func NewClient(conn net.Conn, ID uint64, clientHandler ClientHandler, readDeadline time.Duration) *Client {
+	if readDeadline == 0 {
+		readDeadline = time.Minute
+	}
 	client := &Client{
 		conn:         conn,
 		Send:         make(chan models.Message, sendBuffSize),
@@ -104,12 +107,19 @@ func (client *Client) receive() {
 				return
 			}
 			if err, ok := err.(net.Error); ok && err.Timeout() {
-				client.Stop("Client timed out")
+				if client.readDeadline == 0 {
+					// No timeout enforcement.
+					// Decoder breaks if it returns an error; reinitialize.
+					decoder = json.NewDecoder(client.conn)
+				} else {
+					client.Stop("Client timed out")
+					return
+				}
+			} else {
+				log.Printf("Error deserializing message from client: %s", err)
+				client.Stop("Receive error")
 				return
 			}
-			log.Printf("Error deserializing message from client: %s", err)
-			client.Stop("Receive error")
-			return
 		}
 
 		select {
