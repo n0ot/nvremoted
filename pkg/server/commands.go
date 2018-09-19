@@ -1,6 +1,8 @@
 package server
 
 import (
+	"log"
+
 	"github.com/pkg/errors"
 
 	"github.com/n0ot/nvremoted/pkg/models"
@@ -28,10 +30,78 @@ func (f CommandHandlerFunc) Handle(srv *Server, command *Command) {
 }
 
 // InternalCommands contains commands available only for internal use.
-var InternalCommands = make(map[string]CommandHandler) // Can be run by internal callers, but not by a client
+var InternalCommands map[string]CommandHandler // Can be run by internal callers, but not by a client
 
 // Commands contains commands available for clients to call.
-var Commands = make(map[string]CommandHandler) // Client accessible commands
+var Commands map[string]CommandHandler // Client accessible commands
+
+// Initialize command registries
+func init() {
+	InternalCommands = make(map[string]CommandHandler)
+	InternalCommands["addclient"] = cmdAddclient
+	InternalCommands["rmclient"] = cmdRmclient
+
+	Commands = make(map[string]CommandHandler)
+	Commands["protocol_version"] = cmdProtocolVersion
+	Commands["join"] = cmdJoin
+	Commands["pong"] = cmdPong
+}
+
+// Internal commands
+
+// cmdAddclient adds a client to NVRemoted.
+var cmdAddclient CommandHandlerFunc = func(srv *Server, command *Command) {
+	if err := srv.AddClient(command.Client, command.Resp); err != nil {
+		log.Printf("Cannot add %s to the server: %s", command.Client, err)
+	}
+}
+
+// cmdRmclient removes a client from NVRemoted.
+var cmdRmclient CommandHandlerFunc = func(srv *Server, command *Command) {
+	reason := "Client disconnected"
+	if v, ok := command.Args["reason"].(string); ok {
+		reason = v
+	}
+
+	srv.Kick(command.Client.ID, reason)
+}
+
+// External commands
+
+// cmdProtocolVersion sets the protocol version for a client.
+// Currently, nothing is set, because only protocol version 2 is supported.
+// If the protocol version is not 2, the client will be kicked.
+var cmdProtocolVersion CommandHandlerFunc = func(srv *Server, command *Command) {
+	if version, ok := command.Args["version"].(float64); !ok || version != 2.0 {
+		command.Resp <- models.Message(map[string]interface{}{
+			"type": "version_mismatch",
+		})
+		srv.Kick(command.Client.ID, "Version mismatch")
+	}
+}
+
+// cmdJoin joins a channel
+var cmdJoin CommandHandlerFunc = func(srv *Server, command *Command) {
+	name, ok := command.Args["channel"].(string)
+	if !ok || name == "" {
+		command.Resp <- models.ErrorMessage("No channel name given")
+		return
+	}
+	connectionType, ok := command.Args["connection_type"].(string)
+	if !ok || connectionType == "" {
+		command.Resp <- models.ErrorMessage("No connection_type given")
+		return
+	}
+
+	if err := srv.JoinChannel(name, connectionType, command.Client.ID, command.Resp); err != nil {
+		command.Resp <- models.ErrorMessage(err.Error())
+	}
+}
+
+// cmdPong is a no-op.
+// This command simply allows clients to reset their last seen timers.
+var cmdPong CommandHandlerFunc = func(srv *Server, command *Command) {
+}
 
 // handleCommand looks up a command in the InternalCommands or Commands map
 // and if found, runs it.
