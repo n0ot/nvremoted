@@ -4,7 +4,6 @@ package channels
 
 import (
 	"errors"
-	"log"
 
 	"github.com/n0ot/nvremoted/pkg/models"
 )
