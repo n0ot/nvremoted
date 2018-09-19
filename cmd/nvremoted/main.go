@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/n0ot/nvremoted"
+	"github.com/n0ot/nvremoted/pkg/server"
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/viper"
 )
@@ -57,19 +57,24 @@ func main() {
 		log.Fatalf("Error reading motd from file. If you don't want a message of the day, create an empty file: %s\n", err)
 	}
 
-	config := &nvremoted.ServerConfig{
-		BindAddr:           viper.GetString("bindAddr"),
+	config := &server.Config{
 		TimeBetweenPings:   viper.GetDuration("timeBetweenPings") * time.Second,
 		PingsUntilTimeout:  viper.GetInt("pingsUntilTimeout"),
 		ServerName:         viper.GetString("serverName"),
 		Motd:               strings.TrimSpace(string(motd)),
 		WarnIfNotEncrypted: viper.GetBool("warnIfNotEncrypted"),
-		UseTLS:             viper.GetBool("tls.useTls"),
-		CertFile:           os.ExpandEnv(viper.GetString("tls.certFile")),
-		KeyFile:            os.ExpandEnv(viper.GetString("tls.keyFile")),
 	}
 
+	bindAddr := viper.GetString("bindAddr")
+	certFile := os.ExpandEnv(viper.GetString("tls.certFile"))
+	keyFile := os.ExpandEnv(viper.GetString("tls.keyFile"))
+	useTLS := viper.GetBool("tls.useTls")
+
 	log.Printf("Starting %s", Name)
-	server := nvremoted.NewServer(config)
-	server.Start()
+	srv := server.NewServer(config)
+	if useTLS {
+		srv.ListenAndServeTLS(bindAddr, certFile, keyFile)
+	} else {
+		srv.ListenAndServe(bindAddr)
+	}
 }
