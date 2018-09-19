@@ -32,9 +32,6 @@ type Client struct {
 // When the ClientHandler returns,
 // the client will be disconnected.
 func NewClient(conn net.Conn, ID uint64, clientHandler ClientHandler, readDeadline time.Duration) *Client {
-	if readDeadline == 0 {
-		readDeadline = time.Minute
-	}
 	client := &Client{
 		conn:         conn,
 		Send:         make(chan models.Message, sendBuffSize),
@@ -96,7 +93,11 @@ func (client *Client) receive() {
 
 	var msg models.Message
 	for !client.Stopped() {
-		client.conn.SetReadDeadline(time.Now().Add(client.readDeadline))
+		if client.readDeadline == 0 {
+			client.conn.SetReadDeadline(time.Now().Add(time.Minute))
+		} else {
+			client.conn.SetReadDeadline(time.Now().Add(client.readDeadline))
+		}
 		msg = nil // Otherwise, new json would be merged into the existing map.
 		if err := decoder.Decode(&msg); err != nil {
 			// If recovering from an error, readers of client.Recv
