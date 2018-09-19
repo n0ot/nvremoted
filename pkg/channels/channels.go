@@ -4,6 +4,7 @@ package channels
 
 import (
 	"errors"
+	"log"
 
 	"github.com/n0ot/nvremoted/pkg/models"
 )
@@ -11,14 +12,14 @@ import (
 // Channel relays traffic between clients using the same key.
 type Channel struct {
 	Name    string
-	members []*channelMember
+	members []*member
 }
 
 // New makes a new channel.
 func New(name string) *Channel {
 	return &Channel{
 		Name:    name,
-		members: make([]*channelMember, 0),
+		members: make([]*member, 0),
 	}
 }
 
@@ -30,11 +31,11 @@ func (ch *Channel) Broadcast(msg models.Message, excludeIDs ...uint64) {
 		excludedIDSet[id] = struct{}{}
 	}
 
-	for _, member := range ch.members {
-		if _, idExcluded := excludedIDSet[member.ID]; idExcluded || member.resp == nil {
+	for _, mbr := range ch.members {
+		if _, idExcluded := excludedIDSet[mbr.ID]; idExcluded || mbr.resp == nil {
 			continue
 		}
-		member.resp <- msg
+		mbr.resp <- msg
 	}
 }
 
@@ -48,13 +49,14 @@ func (ch *Channel) Join(memberID uint64, connectionType string, resp chan<- mode
 		}
 	}
 
-	member := &channelMember{
+	mbr := &member{
 		ID:             memberID,
 		ConnectionType: connectionType,
+		resp:           resp,
 	}
 	ch.Broadcast(models.Message(map[string]interface{}{
 		"type":   "client_joined",
-		"client": member,
+		"client": mbr,
 	}))
 
 	resp <- models.Message(map[string]interface{}{
@@ -63,7 +65,7 @@ func (ch *Channel) Join(memberID uint64, connectionType string, resp chan<- mode
 		"type":    "channel_joined",
 		"channel": ch.Name,
 	})
-	ch.members = append(ch.members, member)
+	ch.members = append(ch.members, mbr)
 
 	return nil
 }
@@ -72,24 +74,24 @@ func (ch *Channel) Join(memberID uint64, connectionType string, resp chan<- mode
 // If the memberID isn't in the channel, Leave will return an error.
 // If there are still members in the channel after memberID was removed, more will be true.
 func (ch *Channel) Leave(memberID uint64, reason string) (more bool, err error) {
-	var member *channelMember
+	var mbr *member
 	for i := 0; i < len(ch.members); i++ {
 		if memberID != ch.members[i].ID {
 			continue
 		}
-		member = ch.members[i]
+		mbr = ch.members[i]
 		ch.members = append(ch.members[:i], ch.members[i+1:]...)
 		break
 	}
 
 	more = len(ch.members) != 0
-	if member == nil {
+	if mbr == nil {
 		return more, errors.New("Member ID not in channel")
 	}
 
 	msg := models.Message(map[string]interface{}{
 		"type":   "client_left",
-		"client": member,
+		"client": mbr,
 	})
 	if reason != "" {
 		msg["reason"] = reason
