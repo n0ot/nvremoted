@@ -56,7 +56,6 @@ func (ch *Channel) Join(memberID uint64, connectionType string, resp chan<- mode
 		"type":   "client_joined",
 		"client": member,
 	}))
-	ch.members = append(ch.members, member)
 
 	resp <- models.Message(map[string]interface{}{
 		"origin":  memberID,
@@ -64,6 +63,7 @@ func (ch *Channel) Join(memberID uint64, connectionType string, resp chan<- mode
 		"type":    "channel_joined",
 		"channel": ch.Name,
 	})
+	ch.members = append(ch.members, member)
 
 	return nil
 }
