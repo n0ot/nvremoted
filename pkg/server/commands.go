@@ -73,9 +73,9 @@ var cmdRmclient CommandHandlerFunc = func(srv *Server, command *Command) {
 // If the protocol version is not 2, the client will be kicked.
 var cmdProtocolVersion CommandHandlerFunc = func(srv *Server, command *Command) {
 	if version, ok := command.Args["version"].(float64); !ok || version != 2.0 {
-		command.Resp <- models.Message(map[string]interface{}{
+		command.Resp <- models.Message{
 			"type": "version_mismatch",
-		})
+		}
 		srv.Kick(command.Client.ID, "Version mismatch")
 	}
 }
@@ -151,7 +151,7 @@ func (server *Server) handleCommand(command *Command) error {
 			return nil
 		}
 
-		msg := models.Message(make(map[string]interface{}))
+		msg := models.NewMessage()
 		for k, v := range command.Args {
 			msg[k] = v
 		}

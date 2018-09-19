@@ -20,10 +20,10 @@ func (srv *Server) AddClient(client *Client, resp chan<- models.Message) error {
 	srv.clientResp[client.ID] = resp
 
 	if srv.config.Motd != "" {
-		resp <- models.Message(map[string]interface{}{
+		resp <- models.Message{
 			"type": "motd",
 			"motd": srv.config.Motd,
-		})
+		}
 	}
 	return nil
 }
@@ -52,11 +52,11 @@ func (srv *Server) JoinChannel(name, connectionType string, id uint64, resp chan
 
 	channelIsEncrypted := strings.HasPrefix(ch.Name, "E2E_") && len(ch.Name) == 68
 	if srv.config.WarnIfNotEncrypted && !channelIsEncrypted {
-		resp <- models.Message(map[string]interface{}{
+		resp <- models.Message{
 			"type":          "motd",
 			"motd":          "Your traffic will pass through this server unencrypted. Please consider upgrading to a version of NVDA Remote that supports end to end encryption.",
 			"force_display": true,
-		})
+		}
 	}
 
 	srv.clientActiveChannel[id] = ch

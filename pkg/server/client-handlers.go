@@ -44,9 +44,9 @@ func (ch relayClientHandler) Handle(client *Client) string {
 		case resp, ok := <-resp:
 			if !ok {
 				// Server closes resp to kic a client
-				client.Send <- models.Message(map[string]interface{}{
+				client.Send <- models.Message{
 					"type": "kick",
-				})
+				}
 				return "Disconnected by server"
 			}
 			client.Send <- resp

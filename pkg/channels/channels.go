@@ -53,17 +53,17 @@ func (ch *Channel) Join(memberID uint64, connectionType string, resp chan<- mode
 		ConnectionType: connectionType,
 		resp:           resp,
 	}
-	ch.Broadcast(models.Message(map[string]interface{}{
+	ch.Broadcast(models.Message{
 		"type":   "client_joined",
 		"client": mbr,
-	}))
+	})
 
-	resp <- models.Message(map[string]interface{}{
+	resp <- models.Message{
 		"origin":  memberID,
 		"clients": ch.members,
 		"type":    "channel_joined",
 		"channel": ch.Name,
-	})
+	}
 	ch.members = append(ch.members, mbr)
 
 	return nil
@@ -88,10 +88,10 @@ func (ch *Channel) Leave(memberID uint64, reason string) (more bool, err error) 
 		return more, errors.New("Member ID not in channel")
 	}
 
-	msg := models.Message(map[string]interface{}{
+	msg := models.Message{
 		"type":   "client_left",
 		"client": mbr,
-	})
+	}
 	if reason != "" {
 		msg["reason"] = reason
 	}
