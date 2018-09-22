@@ -12,7 +12,7 @@ import (
 
 const (
 	packageName = "github.com/n0ot/nvremoted/cmd/nvremoted"
-	ldflags     = "-X main.Version=$VERSION"
+	ldflags     = "-X " + packageName + "/commands.Version=$VERSION"
 	outDir      = "bin"
 )
 
@@ -36,6 +36,12 @@ func init() {
 func Build() error {
 	mg.Deps(mkBin)
 	return sh.RunWith(getVars(), goexe, "build", "-ldflags", ldflags, "-o", path.Join(outDir, "$BIN_NAME"), packageName)
+}
+
+// BuildRace builds NVRemoted with the race detector enabled
+func BuildRace() error {
+	mg.Deps(mkBin)
+	return sh.RunWith(getVars(), goexe, "build", "-race", "-ldflags", ldflags, "-o", path.Join(outDir, "$BIN_NAME"), packageName)
 }
 
 // Install installs NVRemoted

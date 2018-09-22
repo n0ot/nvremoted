@@ -1,0 +1,49 @@
+# Default NVRemoted configuration
+# By default, NVRemoted looks for this file in $HOME/.config/nvremoted/nvremoted.conf
+#
+# Environment variables will be expanded
+# $CONFDIR expands to the configuration directory.
+
+# Options for the server
+[server]
+# bind  specifies the address and port to listen on
+# format: <host>:<port>
+# bind = "127.0.0.1:6837"  # Listens only on the loopback address, port 6837
+# bind = ":6837"  # binds to all interfaces on port 6837
+bind = "127.0.0.1:6837"
+
+# timeBetweenPings specifies how often clients should be pinged.
+# Pings are sent as newlines, which some clients cannot handle.
+# Set to 0 if you don't want to send pings.
+#
+# pingsUntilTimeout specifies how many pings can be sent to a client before it is kicked do to inactivity.
+# Set to 0 if you don't want to kick inactive clients.
+# This does not affect keep-alive timeout.
+timeBetweenPings = 0
+pingsUntilTimeout = 0
+
+# statsPassword sets the password for retreiving stats from this server.
+# Leave this blank to disable stats.
+statsPassword = ""
+
+
+# Options for the NVRemoted service
+[nvremoted]
+# motdFile  specifies a file containing the message of the day,
+# which will be displayed once per change when users connect.
+# Use an empty file or leave this option unset to disable the MOTD.
+motdFile = "$CONFDIR/motd"
+
+# warnIfNotEncrypted if true, warns clients if they are not using end to end encryption.
+warnIfNotEncrypted = true
+
+# Options for tls (ssl)
+[tls]
+# useTls = true # Enables tls. Required for NVDA Remote
+useTls = true
+
+# certFile  location of the certificate
+certFile = "$CONFDIR/certificates/cert.pem"
+
+# keyFile  location of the private key
+keyFile = "$CONFDIR/certificates/cert.key"

@@ -5,57 +5,115 @@ import (
 	"fmt"
 	"net"
 	"strings"
+	"sync"
 	"time"
 
-	"github.com/n0ot/nvremoted/pkg/channels"
-	"github.com/n0ot/nvremoted/pkg/models"
-	log "github.com/sirupsen/logrus"
+	"github.com/n0ot/nvremoted/pkg/model"
+	"github.com/pkg/errors"
+	"github.com/sirupsen/logrus"
 
 	"crypto/tls"
 )
 
-const acceptBuffSize = 10 // Buffer size for channel that accepts server commands
-
 // Server Contains state for an NVRemoted server.
 type Server struct {
-	config              Config
-	channels            map[string]*channels.Channel
+	TimeBetweenPings    time.Duration
+	PingsUntilTimeout   int
+	readDeadline        time.Duration
+	TLSConfig           *tls.Config
+	clientsMTX          sync.RWMutex // Protects clients
 	clients             map[uint64]*Client
-	clientActiveChannel map[uint64]*channels.Channel
-	clientResp          map[uint64]chan<- models.Message
-	in                  chan *Command // Server accepts commands on this channel
+	handlers            map[string]MessageHandler
+	ConnectedHandler    MessageHandler
+	DisconnectedHandler MessageHandler
+	DefaultHandler      MessageHandler
+	log                 *logrus.Logger
 }
 
-// Config  holds the externally configurable settings for a server.
-type Config struct {
-	ServerName         string
-	TimeBetweenPings   time.Duration
-	PingsUntilTimeout  int
-	TLSConfig          *tls.Config
-	Motd               string
-	WarnIfNotEncrypted bool
+// New creates a new server.
+// After configuring the server, use ListenAndServe or ListenAndServeTLS,
+// or call Serve with your own net.Listener to start the server.
+func New(log *logrus.Logger) *Server {
+	return &Server{
+		clients:  make(map[uint64]*Client),
+		handlers: make(map[string]MessageHandler),
+		log:      log,
+	}
 }
 
-// NewServer creates a new server with the specified configuration
-func NewServer(config *Config) *Server {
-	server := Server{
-		config:              *config,
-		channels:            make(map[string]*channels.Channel),
-		clients:             make(map[uint64]*Client),
-		clientActiveChannel: make(map[uint64]*channels.Channel),
-		clientResp:          make(map[uint64]chan<- models.Message),
-		in:                  make(chan *Command, acceptBuffSize),
+// ListenAndServe listens for connections on the network, and connects them to the NVDA Remote server.
+func (srv *Server) ListenAndServe(addr string) error {
+	listener, err := net.Listen("tcp", addr)
+	if err != nil {
+		return errors.Wrap(err, "Listen")
+	}
+	defer listener.Close()
+
+	srv.log.WithFields(logrus.Fields{
+		"addr":        addr,
+		"tls_enabled": false,
+	}).Info("Listening for incoming connections")
+	srv.Serve(listener)
+	return nil
+}
+
+// ListenAndServeTLS behaves just like ListenAndServe, but wraps the connection with TLS.
+func (srv *Server) ListenAndServeTLS(addr, certFile, keyFile string) error {
+	if certFile != "" && keyFile != "" {
+		cert, err := tls.LoadX509KeyPair(certFile, keyFile)
+		if err != nil {
+			return errors.Wrap(err, "Load X.509 key pair")
+		}
+		srv.TLSConfig = &tls.Config{Certificates: []tls.Certificate{cert}}
+	}
+	if srv.TLSConfig == nil {
+		return errors.New("No TLSConfig set in server, and no certFile/keyFile given")
 	}
 
-	return &server
+	listener, err := tls.Listen("tcp", addr, srv.TLSConfig)
+	if err != nil {
+		return errors.Wrap(err, "Listen TLS")
+	}
+	defer listener.Close()
+
+	srv.log.WithFields(logrus.Fields{
+		"addr":        addr,
+		"tls_enabled": true,
+	}).Info("Listening for incoming connections")
+	srv.Serve(listener)
+	return nil
+}
+
+func (srv *Server) acceptClients(listener net.Listener) {
+	var nextID uint64
+	srv.readDeadline = srv.TimeBetweenPings * time.Duration(srv.PingsUntilTimeout)
+	for {
+		conn, err := listener.Accept()
+		if err != nil {
+			srv.log.WithFields(logrus.Fields{
+				"error": err,
+			}).Error("Error accepting connection")
+			continue
+		}
+		if tcpConn, ok := conn.(*net.TCPConn); ok {
+			tcpConn.SetKeepAlive(true)
+			tcpConn.SetKeepAlivePeriod(srv.TimeBetweenPings)
+		}
+
+		remoteAddr, _, err := net.SplitHostPort(conn.RemoteAddr().String())
+		remoteHost := getHostFromAddrIfPossible(remoteAddr)
+		newClient(conn, nextID, srv, remoteHost)
+		nextID++
+	}
 }
 
 // Serve serves clients the NVDA Remote service.
-func (server *Server) Serve(listener net.Listener) {
-	log.Printf("Starting server with configuration:\n%+v", server.config)
-
-	timeBetweenPings := server.config.TimeBetweenPings
-
+func (srv *Server) Serve(listener net.Listener) {
+	srv.log.WithFields(logrus.Fields{
+		"time_between_pings":  srv.TimeBetweenPings,
+		"pings_until_timeout": srv.PingsUntilTimeout,
+	}).Info("Server started")
+	timeBetweenPings := srv.TimeBetweenPings
 	// If timeBetweenPings is 0,
 	// the pings chan will remain nil, and the ping handling will never be called.
 	var pings <-chan time.Time
@@ -64,30 +122,88 @@ func (server *Server) Serve(listener net.Listener) {
 		defer ticker.Stop()
 		pings = ticker.C
 	}
+	go srv.acceptClients(listener)
 
-	for {
-		select {
-		case command, ok := <-server.in:
-			if !ok {
-				break
+	for _ = range pings {
+		srv.clientsMTX.RLock()
+		for _, c := range srv.clients {
+			if c == nil {
+				continue
 			}
-			if err := server.handleCommand(command); err != nil {
-				log.Printf("Error while processing command: %s", err)
-				if command.Resp != nil {
-					command.Resp <- models.ErrorMessage("Internal error")
-				}
-			}
-
-		case <-pings:
-			for id, client := range server.clients {
-				if client == nil {
-					continue
-				}
-				if resp := server.clientResp[id]; resp != nil {
-					resp <- nil // Translated to client as newline
-				}
-			}
+			c.Send <- nil // Translated to client as newline
 		}
+		srv.clientsMTX.RUnlock()
+	}
+
+	srv.log.Info("Server finished")
+}
+
+// A MessageHandler defines behavior for handling incoming messages.
+type MessageHandler interface {
+	Handle(c *Client, msg model.Message)
+}
+
+// MessageHandlerFunc is an adapter to turn an ordinary function into a MessageHandler.
+type MessageHandlerFunc func(c *Client, msg model.Message)
+
+func (f MessageHandlerFunc) Handle(c *Client, msg model.Message) {
+	f(c, msg)
+}
+
+// HandleMessage registers a MessageHandler to the given message type.
+func (srv *Server) HandleMessage(name string, h MessageHandler) {
+	srv.handlers[name] = h
+}
+
+// handle handles an incoming message
+func (srv *Server) handle(c *Client, msg model.Message) {
+	t, ok := msg["type"].(string)
+	if !ok {
+		c.Send <- model.ErrorMessage("No type in message")
+		return
+	}
+	h, ok := srv.handlers[t]
+	if !ok {
+		h = srv.DefaultHandler
+	}
+	if h == nil {
+		c.Send <- model.ErrorMessage("Unrecognized command")
+		return
+	}
+
+	h.Handle(c, msg)
+}
+
+// addClient adds a client to the server.
+func (srv *Server) addClient(c *Client) {
+	srv.clientsMTX.Lock()
+	srv.clients[c.ID] = c
+	srv.clientsMTX.Unlock()
+	srv.log.WithFields(logrus.Fields{
+		"server_client": c,
+	}).Info("Client connected")
+
+	if srv.ConnectedHandler != nil {
+		srv.ConnectedHandler.Handle(c, model.Message{
+			"type": "connected",
+		})
+	}
+}
+
+// removeClient removes a client from the server.
+func (srv *Server) removeClient(c *Client) {
+	srv.clientsMTX.Lock()
+	delete(srv.clients, c.ID)
+	srv.clientsMTX.Unlock()
+	srv.log.WithFields(logrus.Fields{
+		"server_client": c,
+		"reason":        c.StoppedReason,
+	}).Info("Client disconnected")
+
+	if srv.DisconnectedHandler != nil {
+		srv.DisconnectedHandler.Handle(c, model.Message{
+			"type": "disconnected",
+		})
 	}
 }
 
