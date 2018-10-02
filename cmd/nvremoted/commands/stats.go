@@ -53,6 +53,7 @@ func init() {
 }
 
 func getStats() error {
+
 	password := viper.GetString("server.statsPassword")
 	if promptForPassword {
 		fmt.Printf("Password: ")
@@ -82,11 +83,11 @@ func getStats() error {
 
 	enc := json.NewEncoder(conn)
 	dec := json.NewDecoder(conn)
-	var msg model.Message
+	var raw json.RawMessage
 
-	err = enc.Encode(model.Message{
-		"type":     "stat",
-		"password": password,
+	err = enc.Encode(statMessage{
+		DefaultMessage: model.DefaultMessage{"stat"},
+		Password:       password,
 	})
 	if err != nil {
 		return errors.Wrap(err, "Request stats")
@@ -94,47 +95,50 @@ func getStats() error {
 
 	conn.SetReadDeadline(time.Now().Add(10 * time.Second))
 
+	messages := map[string]func() model.Message{
+		"motd":  func() model.Message { return &nvremoted.MOTDMessage{} },
+		"error": func() model.Message { return &model.ErrorMessage{} },
+		"stats": func() model.Message { return &statsMessage{} },
+	}
+
 	for {
-		if err := dec.Decode(&msg); err != nil {
+		if err := dec.Decode(&raw); err != nil {
 			return errors.Wrap(err, "Get stats response from server")
 		}
-		t, ok := msg["type"].(string)
-		if !ok || (t != "stats" && t != "motd") {
+		var unknownMSG model.DefaultMessage
+		if err := json.Unmarshal(raw, &unknownMSG); err != nil {
+			return errors.Wrap(err, "Get stats response from server")
+		}
+		if messages[unknownMSG.Type] == nil {
 			// Ignore all other messages.
-			msg = nil // or messages will overlap
 			continue
 		}
-		if t == "motd" {
-			motd, _ := msg["motd"].(string)
-			if motd != "" {
-				fmt.Printf("MOTD: %s\n", motd)
-			}
-			msg = nil
-			continue
+
+		msg := messages[unknownMSG.Type]()
+		if err := json.Unmarshal(raw, &msg); err != nil {
+			return errors.Wrap(err, "Get stats response from server")
 		}
-		break
-	}
-	if errStr, ok := msg["error"].(string); ok {
-		return errors.Errorf("Server returned an error: %s", errStr)
-	}
-
-	stats, err := toStats(msg["stats"])
-	if err != nil {
-		return errors.New("No valid stats returned from server")
-	}
-
-	fmt.Printf(`Stats for NVRemoted server at %s:
+		switch msg := msg.(type) {
+		case *nvremoted.MOTDMessage:
+			fmt.Printf("MOTD: %s\n", msg.MOTD)
+		case *model.ErrorMessage:
+			return errors.Errorf("Server returned an error: %s", msg.Error)
+		case *statsMessage:
+			fmt.Printf(`Stats for NVRemoted server at %s:
 Uptime: %s
 Number of channels: %d, %d of which are not encrypted
 Max channels: %d on %s
 
 Number of clients: %d, %d of which are not using end to end encryption
 Max clients: %d on %s
-`, statsAddr, stats.Uptime,
-		stats.NumChannels, stats.NumUnencryptedChannels,
-		stats.MaxChannels, stats.MaxChannelsAt,
-		stats.NumClients, stats.NumUnencryptedClients,
-		stats.MaxClients, stats.MaxClientsAt)
+`, statsAddr, msg.Stats.Uptime,
+				msg.Stats.NumChannels, msg.Stats.NumUnencryptedChannels,
+				msg.Stats.MaxChannels, msg.Stats.MaxChannelsAt,
+				msg.Stats.NumClients, msg.Stats.NumUnencryptedClients,
+				msg.Stats.MaxClients, msg.Stats.MaxClientsAt)
+			return nil
+		}
+	}
 
 	return nil
 }

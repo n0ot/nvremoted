@@ -3,16 +3,16 @@ package nvremoted
 import (
 	"errors"
 	"strings"
-	"sync"
 
 	"github.com/n0ot/nvremoted/pkg/model"
 )
 
+var errAlreadyInChannel = errors.New("Already in channel")
+
 // A channel relays traffic between clients using the same key.
 type channel struct {
-	name       string
-	membersMTX sync.RWMutex // Protects members
-	members    []*channelMember
+	name    string
+	members []*channelMember
 }
 
 // newChannel makes a new channel.
@@ -24,14 +24,8 @@ func newChannel(name string) *channel {
 	}
 }
 
-// Broadcast broadcasts a message to all members of this channel.
+// broadcast broadcasts a message to all members of this channel.
 // Members whose ID is in excludeIDs will be skipped.
-func (ch *channel) Broadcast(msg model.Message, excludeIDs ...uint64) {
-	ch.membersMTX.RLock()
-	defer ch.membersMTX.RUnlock()
-	ch.broadcast(msg, excludeIDs...)
-}
-
 func (ch *channel) broadcast(msg model.Message, excludeIDs ...uint64) {
 	excludedIDSet := make(map[uint64]struct{})
 	for _, id := range excludeIDs {
@@ -46,15 +40,13 @@ func (ch *channel) broadcast(msg model.Message, excludeIDs ...uint64) {
 	}
 }
 
-// Join adds a member to this channel, and sends all other members a client_joined message.
+// join adds a member to this channel, and sends all other members a client_joined message.
 // If the member is already in this channel, an error will be returned.
 // The joining member will be sent a channel_joined message.
-func (ch *channel) Join(c *Client, connectionType string) error {
-	ch.membersMTX.Lock()
-	defer ch.membersMTX.Unlock()
+func (ch *channel) join(c *Client, connectionType string) error {
 	for i := 0; i < len(ch.members); i++ {
 		if c.ID == ch.members[i].ID {
-			return errors.New("Already in channel")
+			return errAlreadyInChannel
 		}
 	}
 
@@ -62,28 +54,18 @@ func (ch *channel) Join(c *Client, connectionType string) error {
 		Client:         c,
 		ConnectionType: connectionType,
 	}
-	ch.broadcast(model.Message{
-		"type":   "client_joined",
-		"client": member,
-	})
-
-	c.Send <- model.Message{
-		"origin":  member.ID,
-		"clients": ch.members,
-		"type":    "channel_joined",
-		"channel": ch.name,
-	}
+	ch.broadcast(newClientJoinedMessage(member))
+	c.Send <- newChannelJoinedMessage(member.ID, ch)
 	ch.members = append(ch.members, member)
 
 	return nil
 }
 
-// Leave removes a member from this channel, and sends all other members a client_left message.
+// leave removes a member from this channel, and sends all other members a client_left message.
 // If the member's ID isn't in the channel, Leave will return an error.
 // If there are still members in the channel after memberID was removed, more will be true.
-func (ch *channel) Leave(id uint64, reason string) (more bool, err error) {
+func (ch *channel) leave(id uint64, reason string) (more bool, err error) {
 	var member *channelMember
-	ch.membersMTX.Lock()
 	for i := 0; i < len(ch.members); i++ {
 		if id != ch.members[i].ID {
 			continue
@@ -92,24 +74,13 @@ func (ch *channel) Leave(id uint64, reason string) (more bool, err error) {
 		ch.members = append(ch.members[:i], ch.members[i+1:]...)
 		break
 	}
-	ch.membersMTX.Unlock()
 
-	ch.membersMTX.RLock()
 	more = len(ch.members) != 0
-	ch.membersMTX.RUnlock()
 	if member == nil {
 		return more, errors.New("Member ID not in channel")
 	}
 
-	msg := model.Message{
-		"type":   "client_left",
-		"client": member,
-	}
-	if reason != "" {
-		msg["reason"] = reason
-	}
-
-	ch.broadcast(msg)
+	ch.broadcast(newClientLeftMessage(member, reason))
 	return
 }
 
@@ -122,4 +93,59 @@ func (ch *channel) encrypted() bool {
 type channelMember struct {
 	*Client
 	ConnectionType string `json:"connection_type"`
+}
+
+// A channelMessage can contain random fields.
+type ChannelMessage map[string]interface{}
+
+// Type gets the type of this ChannelMessage.
+// If this ChannelMessage has no type, Type will return an empty string.
+func (msg ChannelMessage) Message() string {
+	t, _ := msg["type"].(string)
+	return t
+}
+
+type channelJoinedMessage struct {
+	model.DefaultMessage
+	Origin  uint64           `json:"origin"`
+	Clients []*channelMember `json:"clients"`
+	Channel string           `json:"channel"`
+}
+
+func newChannelJoinedMessage(id uint64, ch *channel) channelJoinedMessage {
+	msg := channelJoinedMessage{
+		DefaultMessage: model.DefaultMessage{"channel_joined"},
+		Origin:         id,
+	}
+	if ch != nil {
+		msg.Clients = ch.members
+		msg.Channel = ch.name
+	}
+	return msg
+}
+
+type clientJoinedMessage struct {
+	model.DefaultMessage
+	Client *channelMember `json:"client"`
+}
+
+func newClientJoinedMessage(member *channelMember) clientJoinedMessage {
+	return clientJoinedMessage{
+		DefaultMessage: model.DefaultMessage{"client_joined"},
+		Client:         member,
+	}
+}
+
+type clientLeftMessage struct {
+	model.DefaultMessage
+	Client *channelMember `json:"client"`
+	Reason string         `json:"reason,omitempty"`
+}
+
+func newClientLeftMessage(member *channelMember, reason string) clientLeftMessage {
+	return clientLeftMessage{
+		DefaultMessage: model.DefaultMessage{"client_left"},
+		Client:         member,
+		Reason:         reason,
+	}
 }

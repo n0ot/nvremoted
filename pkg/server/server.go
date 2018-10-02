@@ -17,17 +17,17 @@ import (
 
 // Server Contains state for an NVRemoted server.
 type Server struct {
-	TimeBetweenPings    time.Duration
-	PingsUntilTimeout   int
-	readDeadline        time.Duration
-	TLSConfig           *tls.Config
-	clientsMTX          sync.RWMutex // Protects clients
-	clients             map[uint64]*Client
-	handlers            map[string]MessageHandler
-	ConnectedHandler    MessageHandler
-	DisconnectedHandler MessageHandler
-	DefaultHandler      MessageHandler
-	log                 *logrus.Logger
+	TimeBetweenPings         time.Duration
+	PingsUntilTimeout        int
+	readDeadline             time.Duration
+	TLSConfig                *tls.Config
+	clientsMTX               sync.RWMutex // Protects clients
+	clients                  map[uint64]*Client
+	messages                 map[string]func() ServerMessage
+	DefaultServerMessageFunc func(*Client, DefaultServerMessage)
+	ConnectedFunc            func(*Client)
+	DisconnectedFunc         func(*Client)
+	log                      *logrus.Logger
 }
 
 // New creates a new server.
@@ -36,7 +36,7 @@ type Server struct {
 func New(log *logrus.Logger) *Server {
 	return &Server{
 		clients:  make(map[uint64]*Client),
-		handlers: make(map[string]MessageHandler),
+		messages: make(map[string]func() ServerMessage),
 		log:      log,
 	}
 }
@@ -130,7 +130,7 @@ func (srv *Server) Serve(listener net.Listener) {
 			if c == nil {
 				continue
 			}
-			c.Send <- nil // Translated to client as newline
+			c.Send <- pingMessage{"ping"}
 		}
 		srv.clientsMTX.RUnlock()
 	}
@@ -138,40 +138,27 @@ func (srv *Server) Serve(listener net.Listener) {
 	srv.log.Info("Server finished")
 }
 
-// A MessageHandler defines behavior for handling incoming messages.
-type MessageHandler interface {
-	Handle(c *Client, msg model.Message)
+type pingMessage model.DefaultMessage
+
+func (msg pingMessage) Message() string {
+	return "ping"
 }
 
-// MessageHandlerFunc is an adapter to turn an ordinary function into a MessageHandler.
-type MessageHandlerFunc func(c *Client, msg model.Message)
-
-func (f MessageHandlerFunc) Handle(c *Client, msg model.Message) {
-	f(c, msg)
+// A ServerMessage is sent to the server from a client.
+// When a ServerMessage is received, its Handle(*Client) method is run.
+type ServerMessage interface {
+	Handle(c *Client)
 }
 
-// HandleMessage registers a MessageHandler to the given message type.
-func (srv *Server) HandleMessage(name string, h MessageHandler) {
-	srv.handlers[name] = h
+type DefaultServerMessage map[string]interface{}
+
+func (msg DefaultServerMessage) Handle(c *Client) {
+	c.srv.DefaultServerMessageFunc(c, msg)
 }
 
-// handle handles an incoming message
-func (srv *Server) handle(c *Client, msg model.Message) {
-	t, ok := msg["type"].(string)
-	if !ok {
-		c.Send <- model.ErrorMessage("No type in message")
-		return
-	}
-	h, ok := srv.handlers[t]
-	if !ok {
-		h = srv.DefaultHandler
-	}
-	if h == nil {
-		c.Send <- model.ErrorMessage("Unrecognized command")
-		return
-	}
-
-	h.Handle(c, msg)
+// RegisterMessage registers a ServerMessage to the given type.
+func (srv *Server) RegisterMessage(name string, f func() ServerMessage) {
+	srv.messages[name] = f
 }
 
 // addClient adds a client to the server.
@@ -183,10 +170,8 @@ func (srv *Server) addClient(c *Client) {
 		"server_client": c,
 	}).Info("Client connected")
 
-	if srv.ConnectedHandler != nil {
-		srv.ConnectedHandler.Handle(c, model.Message{
-			"type": "connected",
-		})
+	if srv.ConnectedFunc != nil {
+		srv.ConnectedFunc(c)
 	}
 }
 
@@ -200,10 +185,8 @@ func (srv *Server) removeClient(c *Client) {
 		"reason":        c.StoppedReason,
 	}).Info("Client disconnected")
 
-	if srv.DisconnectedHandler != nil {
-		srv.DisconnectedHandler.Handle(c, model.Message{
-			"type": "disconnected",
-		})
+	if srv.DisconnectedFunc != nil {
+		srv.DisconnectedFunc(c)
 	}
 }
 

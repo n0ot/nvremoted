@@ -61,7 +61,8 @@ func (c *Client) send(finished chan<- struct{}) {
 				c.Stop("Server removed client")
 				return
 			}
-			if len(msg) == 0 {
+			switch msg := msg.(type) {
+			case pingMessage:
 				if _, err := c.conn.Write([]byte("\n")); err != nil {
 					c.srv.log.WithFields(logrus.Fields{
 						"server_client": c,
@@ -71,15 +72,16 @@ func (c *Client) send(finished chan<- struct{}) {
 					return
 				}
 				continue
-			}
-			if err := encoder.Encode(msg); err != nil {
-				c.srv.log.WithFields(logrus.Fields{
-					"server_client": c,
-					"message":       msg,
-					"error":         err,
-				}).Warn("Error while marshaling message to client")
-				c.Stop("Send error")
-				return
+			default:
+				if err := encoder.Encode(msg); err != nil {
+					c.srv.log.WithFields(logrus.Fields{
+						"server_client": c,
+						"message":       msg,
+						"error":         err,
+					}).Warn("Error while marshaling message to client")
+					c.Stop("Send error")
+					return
+				}
 			}
 		}
 	}
@@ -88,20 +90,18 @@ func (c *Client) send(finished chan<- struct{}) {
 // receive receives data from the client, marshals it, and sends the resulting message to the server to be handled.
 func (c *Client) receive(finished chan<- struct{}) {
 	defer func() { finished <- struct{}{} }()
-	decoder := json.NewDecoder(c.conn)
+	dec := json.NewDecoder(c.conn)
 
-	var msg model.Message
 	for !c.Stopped() {
 		if c.srv.readDeadline == 0 {
 			c.conn.SetReadDeadline(time.Now().Add(time.Minute))
 		} else {
 			c.conn.SetReadDeadline(time.Now().Add(c.srv.readDeadline))
 		}
-		msg = nil // Otherwise, new entries would be merged into the existing map.
 
-		err := decoder.Decode(&msg)
+		msg, err := unmarshalMessage(dec, c.srv.messages)
 		if err == nil {
-			c.srv.handle(c, msg)
+			msg.Handle(c)
 			continue
 		}
 
@@ -113,7 +113,7 @@ func (c *Client) receive(finished chan<- struct{}) {
 			if c.srv.readDeadline == 0 {
 				// No timeout enforcement.
 				// Decoder breaks if it returns an error; reinitialize.
-				decoder = json.NewDecoder(c.conn)
+				dec = json.NewDecoder(c.conn)
 				continue
 			}
 			c.Stop("Client timed out")
@@ -162,4 +162,36 @@ func (c *Client) Stop(reason string) {
 
 func (c *Client) String() string {
 	return fmt.Sprintf("Client %d (%s)", c.ID, c.remoteHost)
+}
+
+func unmarshalMessage(dec *json.Decoder, msgs map[string]func() ServerMessage) (ServerMessage, error) {
+	var raw json.RawMessage
+	if err := dec.Decode(&raw); err != nil {
+		return nil, err
+	}
+
+	var unknownMSG model.DefaultMessage
+	if err := json.Unmarshal(raw, &unknownMSG); err != nil {
+		return nil, err
+	}
+
+	msgFunc := msgs[unknownMSG.Type]
+	var msg ServerMessage
+	if msgFunc == nil {
+		msg = make(DefaultServerMessage)
+	} else {
+		msg = msgFunc()
+	}
+
+	var err error
+	if defaultMSG, ok := msg.(DefaultServerMessage); ok {
+		err = json.Unmarshal(raw, &defaultMSG)
+	} else {
+		err = json.Unmarshal(raw, &msg)
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	return msg, nil
 }

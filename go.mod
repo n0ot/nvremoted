@@ -2,6 +2,7 @@ module github.com/n0ot/nvremoted
 
 require (
 	github.com/howeyc/gopass v0.0.0-20170109162249-bf9dde6d0d2c
+	github.com/inconshreveable/mousetrap v1.0.0 // indirect
 	github.com/mitchellh/go-homedir v1.0.0
 	github.com/mitchellh/mapstructure v1.0.0
 	github.com/pkg/errors v0.8.0

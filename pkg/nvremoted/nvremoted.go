@@ -66,10 +66,7 @@ func (n *NVRD) AddClient(c *Client) error {
 	n.clientsMTX.Unlock()
 
 	if n.MOTD != "" {
-		c.Send <- model.Message{
-			"type": "motd",
-			"motd": n.MOTD,
-		}
+		c.Send <- newMOTDMessage(n.MOTD, false)
 	}
 	return nil
 }
@@ -82,10 +79,6 @@ func (n *NVRD) JoinChannel(name, connectionType string, id uint64) error {
 	defer n.clientsMTX.Unlock()
 	n.channelsMTX.Lock()
 	defer n.channelsMTX.Unlock()
-	return n.joinChannel(name, connectionType, id)
-}
-
-func (n *NVRD) joinChannel(name, connectionType string, id uint64) error {
 	c, ok := n.clients[id]
 	if !ok {
 		return errors.New("Client not found")
@@ -101,7 +94,7 @@ func (n *NVRD) joinChannel(name, connectionType string, id uint64) error {
 	if !existing {
 		ch = newChannel(name)
 	}
-	if err := ch.Join(c, connectionType); err != nil {
+	if err := ch.join(c, connectionType); err != nil {
 		return err
 	}
 	c.ch = ch
@@ -120,11 +113,7 @@ func (n *NVRD) joinChannel(name, connectionType string, id uint64) error {
 	if !chEncrypted {
 		n.numUnencryptedClients++
 		if n.WarnIfNotEncrypted {
-			c.Send <- model.Message{
-				"type":          "motd",
-				"motd":          "Your traffic will pass through this server unencrypted. Please consider upgrading to a version of NVDA Remote that supports end to end encryption.",
-				"force_display": true,
-			}
+			c.Send <- newMOTDMessage("Your traffic will pass through this server unencrypted. Please consider upgrading to a version of NVDA Remote that supports end to end encryption.", true)
 		}
 	}
 
@@ -149,7 +138,7 @@ func (n *NVRD) leaveChannel(id uint64, reason string) error {
 		return errors.New("Client not in a channel")
 	}
 
-	more, err := c.ch.Leave(id, reason)
+	more, err := c.ch.leave(id, reason)
 	if err != nil {
 		return err
 	}
@@ -169,9 +158,11 @@ func (n *NVRD) leaveChannel(id uint64, reason string) error {
 }
 
 // Send sends a message to the channel the client is a member of.
-func (n *NVRD) Send(id uint64, msg model.Message) error {
+func (n *NVRD) Send(id uint64, msg ChannelMessage) error {
 	n.clientsMTX.RLock()
 	defer n.clientsMTX.RUnlock()
+	n.channelsMTX.RLock()
+	defer n.channelsMTX.RUnlock()
 
 	c, ok := n.clients[id]
 	if !ok {
@@ -180,13 +171,13 @@ func (n *NVRD) Send(id uint64, msg model.Message) error {
 	if c.ch == nil {
 		return errors.New("Client not in a channel")
 	}
-	msg2 := make(model.Message)
+	msg2 := make(ChannelMessage)
 	for k, v := range msg {
 		msg2[k] = v
 	}
 	msg2["origin"] = c.ID
 
-	c.ch.Broadcast(msg2, c.ID)
+	c.ch.broadcast(msg2, c.ID)
 	return nil
 }
 
@@ -245,5 +236,19 @@ func (n *NVRD) Stats() Stats {
 		MaxClients:             n.maxClients,
 		MaxClientsAt:           n.maxClientsTime,
 		NumUnencryptedClients:  n.numUnencryptedClients,
+	}
+}
+
+type MOTDMessage struct {
+	model.DefaultMessage
+	MOTD         string `json:"motd"`
+	ForceDisplay bool   `json:"force_display"`
+}
+
+func newMOTDMessage(motd string, forceDisplay bool) MOTDMessage {
+	return MOTDMessage{
+		DefaultMessage: model.DefaultMessage{"motd"},
+		MOTD:           motd,
+		ForceDisplay:   forceDisplay,
 	}
 }

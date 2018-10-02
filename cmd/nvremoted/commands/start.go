@@ -65,12 +65,12 @@ func runServer(cmd *cobra.Command, args []string) {
 	srv := server.New(log)
 	srv.TimeBetweenPings = viper.GetDuration("server.timeBetweenPings") * time.Second
 	srv.PingsUntilTimeout = viper.GetInt("server.pingsUntilTimeout")
-	srv.ConnectedHandler = server.MessageHandlerFunc(handleConnected)
-	srv.DisconnectedHandler = server.MessageHandlerFunc(handleDisconnected)
-	srv.HandleMessage("join", server.MessageHandlerFunc(handleJoined))
-	srv.HandleMessage("protocol_version", server.MessageHandlerFunc(handleProtocolVersion))
-	srv.HandleMessage("stat", server.MessageHandlerFunc(handleStat))
-	srv.DefaultHandler = server.MessageHandlerFunc(handleDefault)
+	srv.ConnectedFunc = handleConnected
+	srv.DisconnectedFunc = handleDisconnected
+	srv.RegisterMessage("join", func() server.ServerMessage { return &joinMessage{} })
+	srv.RegisterMessage("protocol_version", func() server.ServerMessage { return &protocolVersionMessage{} })
+	srv.RegisterMessage("stat", func() server.ServerMessage { return &statMessage{} })
+	srv.DefaultServerMessageFunc = handleDefault
 
 	bindAddr := viper.GetString("server.bind")
 	certFile := os.ExpandEnv(viper.GetString("tls.certFile"))
@@ -85,7 +85,7 @@ func runServer(cmd *cobra.Command, args []string) {
 	}
 }
 
-func handleConnected(c *server.Client, msg model.Message) {
+func handleConnected(c *server.Client) {
 	nc := &nvremoted.Client{
 		ID:   c.ID,
 		Send: c.Send,
@@ -99,62 +99,78 @@ func handleConnected(c *server.Client, msg model.Message) {
 	}
 }
 
-func handleDisconnected(c *server.Client, msg model.Message) {
+func handleDisconnected(c *server.Client) {
 	nvrd.Kick(c.ID, c.StoppedReason)
 }
 
-func handleJoined(c *server.Client, msg model.Message) {
-	name, _ := msg["channel"].(string)
-	connectionType, _ := msg["connection_type"].(string)
-	if name == "" {
-		c.Send <- model.ErrorMessage("No channel name")
+// joinMessage is sent when a client wants to join a channel.
+type joinMessage struct {
+	model.DefaultMessage
+	Channel        string `json:"channel"`
+	ConnectionType string `json:"connection_type"`
+}
+
+func (msg joinMessage) Handle(c *server.Client) {
+	if msg.Channel == "" {
+		c.Send <- model.NewErrorMessage("No channel name")
 		return
 	}
-	if connectionType == "" {
-		c.Send <- model.ErrorMessage("No connection type")
+	if msg.ConnectionType == "" {
+		c.Send <- model.NewErrorMessage("No connection type")
 		return
 	}
 
-	if err := nvrd.JoinChannel(name, connectionType, c.ID); err != nil {
-		c.Send <- model.ErrorMessage(err.Error())
+	if err := nvrd.JoinChannel(msg.Channel, msg.ConnectionType, c.ID); err != nil {
+		c.Send <- model.NewErrorMessage(err.Error())
 	}
 }
 
-func handleDefault(c *server.Client, msg model.Message) {
-	if err := nvrd.Send(c.ID, msg); err != nil {
-		c.Send <- model.ErrorMessage(err.Error())
+// handleDefault handles unknown messages.
+func handleDefault(c *server.Client, msg server.DefaultServerMessage) {
+	if err := nvrd.Send(c.ID, nvremoted.ChannelMessage(msg)); err != nil {
+		c.Send <- model.NewErrorMessage(err.Error())
 	}
 }
 
-// handleProtocolVersion does nothing for now; prevents clients who send it from getting an error.
-func handleProtocolVersion(c *server.Client, msg model.Message) {
+// protocolVersionMessage does nothing for now; prevents clients who send it from getting an error.
+type protocolVersionMessage struct {
+	model.DefaultMessage
+	Version int `json:"version"`
 }
 
-func handleStat(c *server.Client, msg model.Message) {
-	password, _ := msg["password"].(string)
-	if password == "" {
-		c.Send <- model.Message{
-			"type":  "stats",
-			"error": "No password provided",
-		}
+func (_ protocolVersionMessage) Handle(c *server.Client) {
+}
+
+// A statMessage is used to get stats from NVRemoted.
+type statMessage struct {
+	model.DefaultMessage
+	Password string `json:"password"`
+}
+
+func (msg statMessage) Handle(c *server.Client) {
+	if msg.Password == "" {
+		c.Send <- model.NewErrorMessage("No password provided")
 		nvrd.Kick(c.ID, "Bad request")
 		return
 	}
 
 	statsPassword := viper.GetString("server.statsPassword")
-	if password != statsPassword {
-		c.Send <- model.Message{
-			"type":  "stats",
-			"error": "Invalid password",
-		}
+	if msg.Password != statsPassword {
+		c.Send <- model.NewErrorMessage("Invalid password")
 		nvrd.Kick(c.ID, "Bad request")
 		return
 	}
 
 	stats := nvrd.Stats()
-	c.Send <- model.Message{
-		"type":  "stats",
-		"stats": stats,
+	c.Send <- statsMessage{
+		DefaultMessage: model.DefaultMessage{"stats"},
+		Stats:          stats,
 	}
 	nvrd.Kick(c.ID, "Request completed")
+}
+
+// A StatsMessage is sent to clients that requested stats.
+type statsMessage struct {
+	model.DefaultMessage
+	Stats nvremoted.Stats `json:"stats"`
 }

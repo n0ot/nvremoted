@@ -1,12 +1,32 @@
 package model
 
-// A Message is passed through the server, to be sent to clients.
-type Message map[string]interface{}
+// A Message is sent to and from clients.
+// All Messages should wrap DefaultMessage, so they have a Type field which marshals to json as "type."
+// This interface allows generic messages to be passed.
+type Message interface {
+	Message() string
+}
 
-// ErrorMessage creates a message of type error and the given reason.
-func ErrorMessage(reason string) Message {
-	return Message(map[string]interface{}{
-		"type":   "error",
-		"reason": reason,
-	})
+// DefaultMessage implements Message, and has a type.
+type DefaultMessage struct {
+	Type string `json:"type"`
+}
+
+// Gets the type of a DefaultMessage.
+// This ensures that DefaultMessage implements the Message interface.
+func (msg DefaultMessage) Message() string {
+	return msg.Type
+}
+
+// An ErrorMessage is sent to clients when an error has occured.
+type ErrorMessage struct {
+	DefaultMessage
+	Error string `json:"error"`
+}
+
+func NewErrorMessage(reason string) ErrorMessage {
+	return ErrorMessage{
+		DefaultMessage: DefaultMessage{"error"},
+		Error:          reason,
+	}
 }
