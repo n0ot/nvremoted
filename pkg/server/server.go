@@ -124,7 +124,7 @@ func (srv *Server) Serve(listener net.Listener) {
 	}
 	go srv.acceptClients(listener)
 
-	for _ = range pings {
+	for range pings {
 		srv.clientsMTX.RLock()
 		for _, c := range srv.clients {
 			if c == nil {

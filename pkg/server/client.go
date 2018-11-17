@@ -135,7 +135,7 @@ func (c *Client) waitFinished(finished <-chan struct{}) {
 	<-finished // Wait for receive to finish
 	c.srv.removeClient(c)
 	// Drain the send channel.
-	for _ = range c.Send {
+	for range c.Send {
 	}
 	c.conn.Close()
 }
