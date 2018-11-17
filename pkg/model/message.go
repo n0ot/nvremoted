@@ -12,7 +12,7 @@ type DefaultMessage struct {
 	Type string `json:"type"`
 }
 
-// Gets the type of a DefaultMessage.
+// Message gets the type of a DefaultMessage.
 // This ensures that DefaultMessage implements the Message interface.
 func (msg DefaultMessage) Message() string {
 	return msg.Type
@@ -24,6 +24,7 @@ type ErrorMessage struct {
 	Error string `json:"error"`
 }
 
+// NewErrorMessage creates an error message with the specified reason.
 func NewErrorMessage(reason string) ErrorMessage {
 	return ErrorMessage{
 		DefaultMessage: DefaultMessage{"error"},

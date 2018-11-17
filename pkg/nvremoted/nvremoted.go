@@ -207,6 +207,7 @@ func (n *NVRD) Kick(id uint64, reason string) error {
 	return nil
 }
 
+// Stats contains statistics about a running instance of NVRemoted.
 type Stats struct {
 	Uptime                 time.Duration `json:"uptime"`
 	NumChannels            int           `json:"num_channels"`
@@ -239,6 +240,7 @@ func (n *NVRD) Stats() Stats {
 	}
 }
 
+// MOTDMessage contains the message of the day.
 type MOTDMessage struct {
 	model.DefaultMessage
 	MOTD         string `json:"motd"`
@@ -247,7 +249,7 @@ type MOTDMessage struct {
 
 func newMOTDMessage(motd string, forceDisplay bool) MOTDMessage {
 	return MOTDMessage{
-		DefaultMessage: model.DefaultMessage{"motd"},
+		DefaultMessage: model.DefaultMessage{Type: "motd"},
 		MOTD:           motd,
 		ForceDisplay:   forceDisplay,
 	}

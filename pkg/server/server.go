@@ -17,17 +17,17 @@ import (
 
 // Server Contains state for an NVRemoted server.
 type Server struct {
-	TimeBetweenPings         time.Duration
-	PingsUntilTimeout        int
-	readDeadline             time.Duration
-	TLSConfig                *tls.Config
-	clientsMTX               sync.RWMutex // Protects clients
-	clients                  map[uint64]*Client
-	messages                 map[string]func() ServerMessage
-	DefaultServerMessageFunc func(*Client, DefaultServerMessage)
-	ConnectedFunc            func(*Client)
-	DisconnectedFunc         func(*Client)
-	log                      *logrus.Logger
+	TimeBetweenPings   time.Duration
+	PingsUntilTimeout  int
+	readDeadline       time.Duration
+	TLSConfig          *tls.Config
+	clientsMTX         sync.RWMutex // Protects clients
+	clients            map[uint64]*Client
+	messages           map[string]func() Message
+	DefaultMessageFunc func(*Client, DefaultMessage)
+	ConnectedFunc      func(*Client)
+	DisconnectedFunc   func(*Client)
+	log                *logrus.Logger
 }
 
 // New creates a new server.
@@ -36,7 +36,7 @@ type Server struct {
 func New(log *logrus.Logger) *Server {
 	return &Server{
 		clients:  make(map[uint64]*Client),
-		messages: make(map[string]func() ServerMessage),
+		messages: make(map[string]func() Message),
 		log:      log,
 	}
 }
@@ -144,20 +144,22 @@ func (msg pingMessage) Message() string {
 	return "ping"
 }
 
-// A ServerMessage is sent to the server from a client.
-// When a ServerMessage is received, its Handle(*Client) method is run.
-type ServerMessage interface {
+// A Message is sent to the server from a client.
+// When a Message is received, its Handle(*Client) method is run.
+type Message interface {
 	Handle(c *Client)
 }
 
-type DefaultServerMessage map[string]interface{}
+// A DefaultMessage is passed to the server when the incoming message type is unknown.
+type DefaultMessage map[string]interface{}
 
-func (msg DefaultServerMessage) Handle(c *Client) {
-	c.srv.DefaultServerMessageFunc(c, msg)
+// Handle calls the DefaultMessageFunc, defined by the specified client.
+func (msg DefaultMessage) Handle(c *Client) {
+	c.srv.DefaultMessageFunc(c, msg)
 }
 
 // RegisterMessage registers a ServerMessage to the given type.
-func (srv *Server) RegisterMessage(name string, f func() ServerMessage) {
+func (srv *Server) RegisterMessage(name string, f func() Message) {
 	srv.messages[name] = f
 }
 

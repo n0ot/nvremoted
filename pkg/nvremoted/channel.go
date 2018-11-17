@@ -95,11 +95,11 @@ type channelMember struct {
 	ConnectionType string `json:"connection_type"`
 }
 
-// A channelMessage can contain random fields.
+// A ChannelMessage can contain random fields.
 type ChannelMessage map[string]interface{}
 
-// Type gets the type of this ChannelMessage.
-// If this ChannelMessage has no type, Type will return an empty string.
+// Message gets the type of this ChannelMessage.
+// If this ChannelMessage has no type, Message will return an empty string.
 func (msg ChannelMessage) Message() string {
 	t, _ := msg["type"].(string)
 	return t
@@ -114,7 +114,7 @@ type channelJoinedMessage struct {
 
 func newChannelJoinedMessage(id uint64, ch *channel) channelJoinedMessage {
 	msg := channelJoinedMessage{
-		DefaultMessage: model.DefaultMessage{"channel_joined"},
+		DefaultMessage: model.DefaultMessage{Type: "channel_joined"},
 		Origin:         id,
 	}
 	if ch != nil {
@@ -131,7 +131,7 @@ type clientJoinedMessage struct {
 
 func newClientJoinedMessage(member *channelMember) clientJoinedMessage {
 	return clientJoinedMessage{
-		DefaultMessage: model.DefaultMessage{"client_joined"},
+		DefaultMessage: model.DefaultMessage{Type: "client_joined"},
 		Client:         member,
 	}
 }
@@ -144,7 +144,7 @@ type clientLeftMessage struct {
 
 func newClientLeftMessage(member *channelMember, reason string) clientLeftMessage {
 	return clientLeftMessage{
-		DefaultMessage: model.DefaultMessage{"client_left"},
+		DefaultMessage: model.DefaultMessage{Type: "client_left"},
 		Client:         member,
 		Reason:         reason,
 	}

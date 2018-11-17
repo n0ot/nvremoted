@@ -21,7 +21,9 @@ type Client struct {
 	done          chan struct{}      // Closed when client is finished
 	StoppedReason string             `json:"stopped_reason"` // Reason the client was stopped
 	srv           *Server            // The server this client belongs to
-	remoteHost    string             `json:"remote_host"`
+	// Go vet complains about the json tag on remoteHost because it isn't exported, but
+	// keeping it so it shows up in the logs.
+	remoteHost string `json:"remote_host"`
 }
 
 // newClient initializes a new client, and
@@ -163,7 +165,7 @@ func (c *Client) String() string {
 	return fmt.Sprintf("Client %d (%s)", c.ID, c.remoteHost)
 }
 
-func unmarshalMessage(dec *json.Decoder, msgs map[string]func() ServerMessage) (ServerMessage, error) {
+func unmarshalMessage(dec *json.Decoder, msgs map[string]func() Message) (Message, error) {
 	var raw json.RawMessage
 	if err := dec.Decode(&raw); err != nil {
 		return nil, err
@@ -175,15 +177,15 @@ func unmarshalMessage(dec *json.Decoder, msgs map[string]func() ServerMessage) (
 	}
 
 	msgFunc := msgs[unknownMSG.Type]
-	var msg ServerMessage
+	var msg Message
 	if msgFunc == nil {
-		msg = make(DefaultServerMessage)
+		msg = make(DefaultMessage)
 	} else {
 		msg = msgFunc()
 	}
 
 	var err error
-	if defaultMSG, ok := msg.(DefaultServerMessage); ok {
+	if defaultMSG, ok := msg.(DefaultMessage); ok {
 		err = json.Unmarshal(raw, &defaultMSG)
 	} else {
 		err = json.Unmarshal(raw, &msg)

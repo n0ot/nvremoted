@@ -86,7 +86,7 @@ func getStats() error {
 	var raw json.RawMessage
 
 	err = enc.Encode(statMessage{
-		DefaultMessage: model.DefaultMessage{"stat"},
+		DefaultMessage: model.DefaultMessage{Type: "stat"},
 		Password:       password,
 	})
 	if err != nil {
@@ -139,8 +139,6 @@ Max clients: %d on %s
 			return nil
 		}
 	}
-
-	return nil
 }
 
 func toStats(s interface{}) (nvremoted.Stats, error) {

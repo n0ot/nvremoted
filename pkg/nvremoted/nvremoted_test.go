@@ -79,7 +79,7 @@ func testJoinChannelHelper(t *testing.T, nvrd *NVRD, channelName string, client 
 		wantedMSG := channelJoinedMessage{
 			Origin:         client.ID,
 			Clients:        existingMembers,
-			DefaultMessage: model.DefaultMessage{"channel_joined"},
+			DefaultMessage: model.DefaultMessage{Type: "channel_joined"},
 			Channel:        channelName,
 		}
 		if !reflect.DeepEqual(wantedMSG, gotMSG) {
@@ -92,7 +92,7 @@ func testJoinChannelHelper(t *testing.T, nvrd *NVRD, channelName string, client 
 			gotMSG := <-mChan
 			wantedMSG := clientJoinedMessage{
 				Client:         member,
-				DefaultMessage: model.DefaultMessage{"client_joined"},
+				DefaultMessage: model.DefaultMessage{Type: "client_joined"},
 			}
 			if !reflect.DeepEqual(wantedMSG, gotMSG) {
 				t.Errorf("Invalid client_joined; wanted %+v, got: %+v", wantedMSG, gotMSG)
@@ -142,7 +142,7 @@ func TestLeaveChannel(t *testing.T) {
 	go func() {
 		gotMSG := <-c1
 		wantedMSG := clientLeftMessage{
-			DefaultMessage: model.DefaultMessage{"client_left"},
+			DefaultMessage: model.DefaultMessage{Type: "client_left"},
 			Client: &channelMember{
 				Client:         client2,
 				ConnectionType: "slave",

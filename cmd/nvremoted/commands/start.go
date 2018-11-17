@@ -67,10 +67,10 @@ func runServer(cmd *cobra.Command, args []string) {
 	srv.PingsUntilTimeout = viper.GetInt("server.pingsUntilTimeout")
 	srv.ConnectedFunc = handleConnected
 	srv.DisconnectedFunc = handleDisconnected
-	srv.RegisterMessage("join", func() server.ServerMessage { return &joinMessage{} })
-	srv.RegisterMessage("protocol_version", func() server.ServerMessage { return &protocolVersionMessage{} })
-	srv.RegisterMessage("stat", func() server.ServerMessage { return &statMessage{} })
-	srv.DefaultServerMessageFunc = handleDefault
+	srv.RegisterMessage("join", func() server.Message { return &joinMessage{} })
+	srv.RegisterMessage("protocol_version", func() server.Message { return &protocolVersionMessage{} })
+	srv.RegisterMessage("stat", func() server.Message { return &statMessage{} })
+	srv.DefaultMessageFunc = handleDefault
 
 	bindAddr := viper.GetString("server.bind")
 	certFile := os.ExpandEnv(viper.GetString("tls.certFile"))
@@ -126,7 +126,7 @@ func (msg joinMessage) Handle(c *server.Client) {
 }
 
 // handleDefault handles unknown messages.
-func handleDefault(c *server.Client, msg server.DefaultServerMessage) {
+func handleDefault(c *server.Client, msg server.DefaultMessage) {
 	if err := nvrd.Send(c.ID, nvremoted.ChannelMessage(msg)); err != nil {
 		c.Send <- model.NewErrorMessage(err.Error())
 	}
@@ -138,7 +138,7 @@ type protocolVersionMessage struct {
 	Version int `json:"version"`
 }
 
-func (_ protocolVersionMessage) Handle(c *server.Client) {
+func (msg protocolVersionMessage) Handle(c *server.Client) {
 }
 
 // A statMessage is used to get stats from NVRemoted.
@@ -163,7 +163,7 @@ func (msg statMessage) Handle(c *server.Client) {
 
 	stats := nvrd.Stats()
 	c.Send <- statsMessage{
-		DefaultMessage: model.DefaultMessage{"stats"},
+		DefaultMessage: model.DefaultMessage{Type: "stats"},
 		Stats:          stats,
 	}
 	nvrd.Kick(c.ID, "Request completed")
