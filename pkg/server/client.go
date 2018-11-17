@@ -76,7 +76,6 @@ func (c *Client) send(finished chan<- struct{}) {
 				if err := encoder.Encode(msg); err != nil {
 					c.srv.log.WithFields(logrus.Fields{
 						"server_client": c,
-						"message":       msg,
 						"error":         err,
 					}).Warn("Error while marshaling message to client")
 					c.Stop("Send error")
