@@ -5,10 +5,8 @@ import (
 	"fmt"
 	"net"
 	"strings"
-	"sync"
 	"time"
 
-	"github.com/n0ot/nvremoted/pkg/model"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 
@@ -17,28 +15,27 @@ import (
 
 // Server Contains state for an NVRemoted server.
 type Server struct {
-	TimeBetweenPings   time.Duration
-	PingsUntilTimeout  int
-	readDeadline       time.Duration
-	TLSConfig          *tls.Config
-	clientsMTX         sync.RWMutex // Protects clients
-	clients            map[uint64]*Client
-	messages           map[string]func() Message
-	DefaultMessageFunc func(*Client, DefaultMessage)
-	ConnectedFunc      func(*Client)
-	DisconnectedFunc   func(*Client)
-	log                *logrus.Logger
-}
+	// TimeBetweenPings specifies the amount of time that will elapse before clients will be sent a ping.
+	// If 0, no pings will be sent.
+	TimeBetweenPings time.Duration
 
-// New creates a new server.
-// After configuring the server, use ListenAndServe or ListenAndServeTLS,
-// or call Serve with your own net.Listener to start the server.
-func New(log *logrus.Logger) *Server {
-	return &Server{
-		clients:  make(map[uint64]*Client),
-		messages: make(map[string]func() Message),
-		log:      log,
-	}
+	// PingsUntilTimeout specifies the number of pings to be sent before unresponsive clients will be kicked.
+	// If TimeBetweenPings is 0, this field has no effect.
+	PingsUntilTimeout int
+
+	// TLSConfig optionally provides a TLS configuration for use by ListenAndServeTLS.
+	TLSConfig *tls.Config
+
+	// MOTD contains the message of the day, which will be sent to clients when connecting.
+	MOTD string
+
+	// StatsPassword sets the password for retreiving stats.
+	StatsPassword string
+
+	Log *logrus.Logger
+
+	// registry stores information about clients and channels on the server.
+	registry registry
 }
 
 // ListenAndServe listens for connections on the network, and connects them to the NVDA Remote server.
@@ -49,7 +46,7 @@ func (srv *Server) ListenAndServe(addr string) error {
 	}
 	defer listener.Close()
 
-	srv.log.WithFields(logrus.Fields{
+	srv.Log.WithFields(logrus.Fields{
 		"addr":        addr,
 		"tls_enabled": false,
 	}).Info("Listening for incoming connections")
@@ -76,7 +73,7 @@ func (srv *Server) ListenAndServeTLS(addr, certFile, keyFile string) error {
 	}
 	defer listener.Close()
 
-	srv.log.WithFields(logrus.Fields{
+	srv.Log.WithFields(logrus.Fields{
 		"addr":        addr,
 		"tls_enabled": true,
 	}).Info("Listening for incoming connections")
@@ -86,11 +83,10 @@ func (srv *Server) ListenAndServeTLS(addr, certFile, keyFile string) error {
 
 func (srv *Server) acceptClients(listener net.Listener) {
 	var nextID uint64
-	srv.readDeadline = srv.TimeBetweenPings * time.Duration(srv.PingsUntilTimeout)
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
-			srv.log.WithFields(logrus.Fields{
+			srv.Log.WithFields(logrus.Fields{
 				"error": err,
 			}).Error("Error accepting connection")
 			continue
@@ -102,94 +98,56 @@ func (srv *Server) acceptClients(listener net.Listener) {
 
 		remoteAddr, _, err := net.SplitHostPort(conn.RemoteAddr().String())
 		remoteHost := getHostFromAddrIfPossible(remoteAddr)
-		newClient(conn, nextID, srv, remoteHost)
+		srv.serveClient(conn, nextID, remoteHost)
 		nextID++
 	}
 }
 
 // Serve serves clients the NVDA Remote service.
 func (srv *Server) Serve(listener net.Listener) {
-	srv.log.WithFields(logrus.Fields{
+	srv.Log.WithFields(logrus.Fields{
 		"time_between_pings":  srv.TimeBetweenPings,
 		"pings_until_timeout": srv.PingsUntilTimeout,
 	}).Info("Server started")
-	timeBetweenPings := srv.TimeBetweenPings
-	// If timeBetweenPings is 0,
-	// the pings chan will remain nil, and the ping handling will never be called.
-	var pings <-chan time.Time
-	if timeBetweenPings > 0 {
-		ticker := time.NewTicker(timeBetweenPings)
-		defer ticker.Stop()
-		pings = ticker.C
+
+	now := time.Now()
+	srv.registry = registry{
+		clients:         make(map[uint64]channelMember),
+		channels:        make(map[string]*channel),
+		statsPassword:   srv.StatsPassword,
+		createdTime:     now,
+		maxChannelsTime: now,
+		maxClientsTime:  now,
 	}
 	go srv.acceptClients(listener)
 
-	for range pings {
-		srv.clientsMTX.RLock()
-		for _, c := range srv.clients {
-			if c == nil {
-				continue
+	// Setup a ping timer to periodically ping clients.
+	// If timeBetweenPings is 0,
+	// pingsCH will remain nil, and clients will not be pinged.
+	var pingsCH <-chan time.Time
+	if srv.TimeBetweenPings > 0 {
+		ticker := time.NewTicker(srv.TimeBetweenPings)
+		defer ticker.Stop()
+		pingsCH = ticker.C
+	}
+	pingMSG := pingMessage{}
+
+	for {
+		select {
+		case <-pingsCH:
+			srv.registry.lock.RLock()
+			for _, member := range srv.registry.clients {
+				member.events <- pingMSG
 			}
-			c.Send <- pingMessage{"ping"}
+			srv.registry.lock.RUnlock()
 		}
-		srv.clientsMTX.RUnlock()
 	}
-
-	srv.log.Info("Server finished")
 }
 
-type pingMessage model.DefaultMessage
+type pingMessage struct{}
 
-func (msg pingMessage) Message() string {
+func (pingMessage) Name() string {
 	return "ping"
-}
-
-// A Message is sent to the server from a client.
-// When a Message is received, its Handle(*Client) method is run.
-type Message interface {
-	Handle(c *Client)
-}
-
-// A DefaultMessage is passed to the server when the incoming message type is unknown.
-type DefaultMessage map[string]interface{}
-
-// Handle calls the DefaultMessageFunc, defined by the specified client.
-func (msg DefaultMessage) Handle(c *Client) {
-	c.srv.DefaultMessageFunc(c, msg)
-}
-
-// RegisterMessage registers a ServerMessage to the given type.
-func (srv *Server) RegisterMessage(name string, f func() Message) {
-	srv.messages[name] = f
-}
-
-// addClient adds a client to the server.
-func (srv *Server) addClient(c *Client) {
-	srv.clientsMTX.Lock()
-	srv.clients[c.ID] = c
-	srv.clientsMTX.Unlock()
-	srv.log.WithFields(logrus.Fields{
-		"server_client": c,
-	}).Info("Client connected")
-
-	if srv.ConnectedFunc != nil {
-		srv.ConnectedFunc(c)
-	}
-}
-
-// removeClient removes a client from the server.
-func (srv *Server) removeClient(c *Client) {
-	srv.clientsMTX.Lock()
-	delete(srv.clients, c.ID)
-	srv.clientsMTX.Unlock()
-	srv.log.WithFields(logrus.Fields{
-		"server_client": c,
-		"reason":        c.StoppedReason,
-	}).Info("Client disconnected")
-
-	if srv.DisconnectedFunc != nil {
-		srv.DisconnectedFunc(c)
-	}
 }
 
 // getHostFromAddrIfPossible tries to get the reverse dns host for an address.

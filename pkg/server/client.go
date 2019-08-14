@@ -2,194 +2,261 @@ package server
 
 import (
 	"encoding/json"
-	"fmt"
 	"io"
 	"net"
+	"sync"
 	"time"
 
-	"github.com/n0ot/nvremoted/pkg/model"
 	"github.com/sirupsen/logrus"
 )
 
-const sendBuffSize = 10 // Buffer size of channel for sending data to clients
-
-// Client Represents a Client on the server.
-type Client struct {
-	conn          net.Conn           // IO for the client
-	Send          chan model.Message `json:"-"` // Messages sent here will be serialized and written to the client
-	ID            uint64             `json:"id"`
-	done          chan struct{}      // Closed when client is finished
-	StoppedReason string             `json:"stopped_reason"` // Reason the client was stopped
-	srv           *Server            // The server this client belongs to
-	// Go vet complains about the json tag on remoteHost because it isn't exported, but
-	// keeping it so it shows up in the logs.
-	remoteHost string `json:"remote_host"`
+// client represents a client on the server.
+type client struct {
+	id         uint64
+	conn       net.Conn
+	events     chan Message  // passes internal messages to a client
+	recv       chan Message  // passes messages to a client from the network
+	readNext   chan struct{} // Used by handleClient to ask readFromClient to read the next message
+	channel    *channel      // active channel
+	registry   *registry
+	encoder    *json.Encoder
+	stopMTX    sync.RWMutex // Protects stopped and stopReason
+	stopped    bool
+	stopReason string
+	log        *logrus.Logger
 }
 
-// newClient initializes a new client, and
-// adds it to the given server.
-func newClient(conn net.Conn, ID uint64, srv *Server, remoteHost string) *Client {
-	c := &Client{
-		conn:       conn,
-		Send:       make(chan model.Message, sendBuffSize),
-		ID:         ID,
-		done:       make(chan struct{}, 1),
-		srv:        srv,
-		remoteHost: remoteHost,
+// serveClient handles events sent and received by a client.
+func (srv *Server) serveClient(conn net.Conn, id uint64, remoteHost string) {
+	c := &client{
+		id:       id,
+		conn:     conn,
+		events:   make(chan Message, 1),
+		recv:     make(chan Message),
+		readNext: make(chan struct{}),
+		registry: &srv.registry,
+		encoder:  json.NewEncoder(conn),
+		log:      srv.Log,
 	}
 
-	c.srv.addClient(c)
-
-	// Connect Send/Recv channels to the net.Conn.
+	// Only when both readFromClient and handleClient are finished will conn be closed.
 	finished := make(chan struct{}, 2)
-	go c.send(finished)
-	go c.receive(finished)
-	go c.waitFinished(finished)
 
-	return c
-}
+	srv.Log.WithFields(logrus.Fields{
+		"id":          id,
+		"remote_host": remoteHost,
+	}).Info("Client connected")
 
-// send receives messages on the client's Send channel, serializes it, and sends it to the client.
-func (c *Client) send(finished chan<- struct{}) {
-	defer func() { finished <- struct{}{} }()
-	encoder := json.NewEncoder(c.conn)
+	go srv.readFromClient(c, finished)
+	go srv.handleClient(c, finished)
+	go func() {
+		// Wait for both readFromClient and handleClient to finish
+		<-finished
+		<-finished
 
-	for {
-		select {
-		case <-c.done:
-			return
-		case msg, ok := <-c.Send:
-			if !ok {
-				c.Stop("Server removed client")
-				return
-			}
-			switch msg := msg.(type) {
-			case pingMessage:
-				if _, err := c.conn.Write([]byte("\n")); err != nil {
-					c.srv.log.WithFields(logrus.Fields{
-						"server_client": c,
-						"error":         err,
-					}).Warn("Error while sending ping to client")
-					c.Stop("Send error")
-					return
-				}
-				continue
-			default:
-				if err := encoder.Encode(msg); err != nil {
-					c.srv.log.WithFields(logrus.Fields{
-						"server_client": c,
-						"error":         err,
-					}).Warn("Error while marshaling message to client")
-					c.Stop("Send error")
-					return
-				}
-			}
+		// The active channel and server registry may still be sending events to the client after requesting removal.
+		// The events channel needs to be closed and drained to prevent these goroutines from hanging.
+		if c.channel != nil {
+			c.channel.leave(c.id)
 		}
-	}
+
+		close(c.events)
+		for range c.events {
+		}
+
+		conn.Close()
+		srv.Log.WithFields(logrus.Fields{
+			"id":          id,
+			"remote_host": remoteHost,
+			"reason":      c.stopReason,
+		}).Info("Client disconnected")
+	}()
 }
 
-// receive receives data from the client, marshals it, and sends the resulting message to the server to be handled.
-func (c *Client) receive(finished chan<- struct{}) {
-	defer func() { finished <- struct{}{} }()
+// readFromClient reads data from the client socket, marshals it, and sends the resulting clientMessage to the client's events channel to be handled.
+func (srv *Server) readFromClient(c *client, finished chan<- struct{}) {
+	defer func() {
+		close(c.recv)
+		finished <- struct{}{}
+	}()
+
+	// readDeadline is the total amount of time that may pass before a client is timed out, if nothing is received.
+	// If PingsUntilTimeout is 0, the client will never time out.
+	readDeadline := srv.TimeBetweenPings * time.Duration(srv.PingsUntilTimeout)
+	if readDeadline == 0 {
+		// If PingsUntilTimeout is not 0, but no pings are to be sent,
+		// idle clients will time out after a minute.
+		// If PingsUntilTimeout is 0, clients will not time out, but it is still necessary to unblock at least once per minute,
+		// to allow this function to return when handleClient stops.
+		readDeadline = time.Minute
+	}
 	dec := json.NewDecoder(c.conn)
 
-	for !c.Stopped() {
-		if c.srv.readDeadline == 0 {
-			c.conn.SetReadDeadline(time.Now().Add(time.Minute))
-		} else {
-			c.conn.SetReadDeadline(time.Now().Add(c.srv.readDeadline))
-		}
-
-		msg, err := unmarshalMessage(dec, c.srv.messages)
+	for !c.isStopped() {
+		c.conn.SetReadDeadline(time.Now().Add(readDeadline))
+		msg, err := unmarshalClientMessage(c.id, dec)
+		// handleClient could have finished while the above read was blocking.
 		if err == nil {
-			msg.Handle(c)
+			c.recv <- msg
+			// Sending the unmarshaled message to handleClient might cause the client to be kicked.
+			// But there would be no wayfor this goroutine to know that until the next read operation unblocks.
+			// By waiting for handleClient to signal that it has finished processing the message,
+			// we are able to see if the client was stopped before trying to read from the socket again.
+			<-c.readNext
 			continue
 		}
 
 		if err == io.EOF {
-			c.Stop("Client disconnected")
+			c.stop("Client disconnected")
 			return
 		}
 		if terr, ok := err.(net.Error); ok && terr.Timeout() {
-			if c.srv.readDeadline == 0 {
+			if srv.PingsUntilTimeout == 0 {
 				// No timeout enforcement.
 				// Decoder breaks if it returns an error; reinitialize.
 				dec = json.NewDecoder(c.conn)
 				continue
 			}
-			c.Stop("Client timed out")
+			c.stop("Client timed out")
 			return
 		}
-		c.srv.log.WithFields(logrus.Fields{
-			"server_client": c,
-			"error":         err,
+		if _, ok := err.(*json.UnmarshalTypeError); ok {
+			c.sendError("malformed message")
+			c.stop("client sent a malformed request")
+			return
+		}
+		srv.Log.WithFields(logrus.Fields{
+			"id":    c.id,
+			"error": err,
 		}).Warn("Error unmarshaling message from client")
-		c.Stop("Receive error")
+		c.stop("Receive error")
 		return
 	}
 }
 
-// waitFinished cleans up after this client has stopped, or when errors were encountered.
-func (c *Client) waitFinished(finished <-chan struct{}) {
-	<-finished // Wait for send to finish
-	<-finished // Wait for receive to finish
-	c.srv.removeClient(c)
-	// Drain the send channel.
-	for range c.Send {
-	}
-	c.conn.Close()
-}
+// handleClient handles events sent on the client's events channel, serializes outgoing messages, and sends them to the client.
+func (srv *Server) handleClient(c *client, finished chan<- struct{}) {
+	defer func() {
+		finished <- struct{}{}
+	}()
 
-// Stopped returns true if the client was stopped.
-func (c *Client) Stopped() bool {
-	select {
-	case <-c.done:
-		return true
-	default:
-		return false
-	}
-}
-
-// Stop stops a client, closing it's net.Conn.
-// Stop is idempotent; calling Stop more than once will have no effect.
-func (c *Client) Stop(reason string) {
-	if c.Stopped() {
-		return
+	// Send the MOTD when the client connects
+	if srv.MOTD != "" {
+		c.send(ClientMOTDResponse{
+			Type: "motd",
+			MOTD: srv.MOTD,
+		})
 	}
 
-	c.StoppedReason = reason
-	close(c.done)
+	for {
+		select {
+		case msg, ok := <-c.recv:
+			if !ok {
+				return // The client was stopped.
+			}
+
+			if handlerFunc := clientMessageHandlers[msg.Name()]; handlerFunc == nil {
+				c.log.WithFields(logrus.Fields{
+					"id":           c.id,
+					"message_name": msg.Name(),
+				}).Warn("No handler found for client message")
+				c.sendInternalError()
+				c.stop("internal error")
+			} else {
+				handlerFunc(c, msg)
+			}
+			// Tell readFromClient to read the next message
+			c.readNext <- struct{}{}
+
+		case msg := <-c.events:
+			if handlerFunc := clientEventHandlers[msg.Name()]; handlerFunc == nil {
+				c.log.WithFields(logrus.Fields{
+					"id":           c.id,
+					"message_name": msg.Name(),
+				}).Warn("No handler found for client event")
+				c.sendInternalError()
+				c.stop("internal error")
+			} else {
+				handlerFunc(c, msg)
+			}
+		}
+	}
 }
 
-func (c *Client) String() string {
-	return fmt.Sprintf("Client %d (%s)", c.ID, c.remoteHost)
+// stop stops a client with the specified reason
+// This method is safe to use concurrently.
+func (c *client) stop(reason string) {
+	c.stopMTX.Lock()
+	c.stopped = true
+	c.stopReason = reason
+	c.stopMTX.Unlock()
 }
 
-func unmarshalMessage(dec *json.Decoder, msgs map[string]func() Message) (Message, error) {
+// isStopped checks to see if a client is stopped.
+// This method is safe to use concurrently.
+func (c *client) isStopped() bool {
+	var stopped bool
+	c.stopMTX.RLock()
+	stopped = c.stopped
+	c.stopMTX.RUnlock()
+	return stopped
+}
+
+func (c *client) send(resp Message) {
+	if err := c.encoder.Encode(resp); err != nil {
+		c.log.WithFields(logrus.Fields{
+			"id":    c.id,
+			"error": err,
+		}).Warn("Error while marshaling response to client")
+		c.stop("Send error")
+	}
+}
+
+func (c *client) sendError(reason string) {
+	c.send(ClientErrorResponse{
+		Type:  "error",
+		Error: reason,
+	})
+}
+
+func (c *client) sendInternalError() {
+	c.sendError("internal error")
+}
+
+func unmarshalClientMessage(id uint64, dec *json.Decoder) (Message, error) {
+	// The raw JSON needs to be stored, because it will be unmarshalled twice,
+	// first to a GenericClientMessage to get its type, then to the more specific Message type.
+	// All returned messages will implement clientMessage, except for those of type message.ChannelMessage.
 	var raw json.RawMessage
 	if err := dec.Decode(&raw); err != nil {
 		return nil, err
 	}
 
-	var unknownMSG model.DefaultMessage
-	if err := json.Unmarshal(raw, &unknownMSG); err != nil {
+	var genericMSG GenericClientMessage
+	if err := json.Unmarshal(raw, &genericMSG); err != nil {
 		return nil, err
 	}
 
-	msgFunc := msgs[unknownMSG.Type]
+	// If genericMSG.Type corresponds to a known clientMessage,
+	// msgFunc will return a new empty message of that type into which the JSON will be unmarshalled.
+	msgFunc := clientMessages[genericMSG.Type]
 	var msg Message
+	var err error
 	if msgFunc == nil {
-		msg = make(DefaultMessage)
+		// There is no clientMessage with the specified type.
+		// Because the NVDA Remote protocol allows arbitrary messages to be sent on channels,
+		// the JSON needs to be marshalled into a map.
+		m := make(map[string]interface{})
+		err = json.Unmarshal(raw, &m)
+		msg = &channelMessage{
+			origin: id,
+			msg:    m,
+		}
 	} else {
 		msg = msgFunc()
-	}
-
-	var err error
-	if defaultMSG, ok := msg.(DefaultMessage); ok {
-		err = json.Unmarshal(raw, &defaultMSG)
-	} else {
 		err = json.Unmarshal(raw, &msg)
 	}
+
 	if err != nil {
 		return nil, err
 	}

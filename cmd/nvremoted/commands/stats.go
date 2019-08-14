@@ -12,8 +12,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/n0ot/nvremoted/pkg/model"
-	"github.com/n0ot/nvremoted/pkg/nvremoted"
+	"github.com/n0ot/nvremoted/pkg/server"
 	"github.com/pkg/errors"
 
 	"github.com/howeyc/gopass"
@@ -53,7 +52,6 @@ func init() {
 }
 
 func getStats() error {
-
 	password := viper.GetString("server.statsPassword")
 	if promptForPassword {
 		fmt.Printf("Password: ")
@@ -85,9 +83,11 @@ func getStats() error {
 	dec := json.NewDecoder(conn)
 	var raw json.RawMessage
 
-	err = enc.Encode(statMessage{
-		DefaultMessage: model.DefaultMessage{Type: "stat"},
-		Password:       password,
+	err = enc.Encode(server.ClientStatMessage{
+		GenericClientMessage: server.GenericClientMessage{
+			Type: "stat",
+		},
+		Password: password,
 	})
 	if err != nil {
 		return errors.Wrap(err, "Request stats")
@@ -95,22 +95,22 @@ func getStats() error {
 
 	conn.SetReadDeadline(time.Now().Add(10 * time.Second))
 
-	messages := map[string]func() model.Message{
-		"motd":  func() model.Message { return &nvremoted.MOTDMessage{} },
-		"error": func() model.Message { return &model.ErrorMessage{} },
-		"stats": func() model.Message { return &statsMessage{} },
+	messages := map[string]func() server.Message{
+		"motd":  func() server.Message { return &server.ClientMOTDResponse{} },
+		"error": func() server.Message { return &server.ClientErrorResponse{} },
+		"stats": func() server.Message { return &server.ClientStatsResponse{} },
 	}
 
 	for {
 		if err := dec.Decode(&raw); err != nil {
 			return errors.Wrap(err, "Get stats response from server")
 		}
-		var unknownMSG model.DefaultMessage
+		var unknownMSG server.GenericClientResponse
 		if err := json.Unmarshal(raw, &unknownMSG); err != nil {
 			return errors.Wrap(err, "Get stats response from server")
 		}
 		if messages[unknownMSG.Type] == nil {
-			// Ignore all other messages.
+			// Ignore all unknown messages
 			continue
 		}
 
@@ -118,39 +118,28 @@ func getStats() error {
 		if err := json.Unmarshal(raw, &msg); err != nil {
 			return errors.Wrap(err, "Get stats response from server")
 		}
+
 		switch msg := msg.(type) {
-		case *nvremoted.MOTDMessage:
+		case *server.ClientMOTDResponse:
 			fmt.Printf("MOTD: %s\n", msg.MOTD)
-		case *model.ErrorMessage:
+
+		case *server.ClientErrorResponse:
 			return errors.Errorf("Server returned an error: %s", msg.Error)
-		case *statsMessage:
+
+		case *server.ClientStatsResponse:
 			fmt.Printf(`Stats for NVRemoted server at %s:
 Uptime: %s
-Number of channels: %d, %d of which are not encrypted
+Number of channels: %d (%d serving clients using end-to-end encryption),
 Max channels: %d on %s
 
-Number of clients: %d, %d of which are not using end to end encryption
+Number of clients: %d
 Max clients: %d on %s
 `, statsAddr, msg.Stats.Uptime,
-				msg.Stats.NumChannels, msg.Stats.NumUnencryptedChannels,
-				msg.Stats.MaxChannels, msg.Stats.MaxChannelsAt,
-				msg.Stats.NumClients, msg.Stats.NumUnencryptedClients,
-				msg.Stats.MaxClients, msg.Stats.MaxClientsAt)
+				msg.Stats.NumChannels, msg.Stats.NumE2eChannels,
+				msg.Stats.MaxChannels, msg.Stats.MaxChannelsTime,
+				msg.Stats.NumClients,
+				msg.Stats.MaxClients, msg.Stats.MaxClientsTime)
 			return nil
 		}
 	}
-}
-
-func toStats(s interface{}) (nvremoted.Stats, error) {
-	var stats nvremoted.Stats
-	b, err := json.Marshal(s)
-	if err != nil {
-		return stats, err
-	}
-	err = json.Unmarshal(b, &stats)
-	if err != nil {
-		return stats, err
-	}
-
-	return stats, nil
 }

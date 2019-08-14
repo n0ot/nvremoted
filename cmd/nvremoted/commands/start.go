@@ -10,8 +10,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/n0ot/nvremoted/pkg/model"
-	"github.com/n0ot/nvremoted/pkg/nvremoted"
 	"github.com/n0ot/nvremoted/pkg/server"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
@@ -20,7 +18,6 @@ import (
 
 var (
 	log        *logrus.Logger
-	nvrd       *nvremoted.NVRD
 	motd       string
 	disableTLS bool
 )
@@ -53,24 +50,19 @@ func runServer(cmd *cobra.Command, args []string) {
 	log.Out = os.Stderr
 	log.Formatter = new(logrus.TextFormatter)
 	log.Level = logrus.DebugLevel
-	log.WithFields(logrus.Fields(viper.AllSettings())).Debug("Configuration")
 
 	motdFile := os.ExpandEnv(viper.GetString("nvremoted.motdFile"))
 	if motdBuf, err := ioutil.ReadFile(motdFile); err == nil {
 		motd = string(motdBuf)
 	}
 
-	nvrd = nvremoted.New(log, strings.TrimSpace(motd), viper.GetBool("nvremoted.warnIfNotEncrypted"))
-
-	srv := server.New(log)
-	srv.TimeBetweenPings = viper.GetDuration("server.timeBetweenPings") * time.Second
-	srv.PingsUntilTimeout = viper.GetInt("server.pingsUntilTimeout")
-	srv.ConnectedFunc = handleConnected
-	srv.DisconnectedFunc = handleDisconnected
-	srv.RegisterMessage("join", func() server.Message { return &joinMessage{} })
-	srv.RegisterMessage("protocol_version", func() server.Message { return &protocolVersionMessage{} })
-	srv.RegisterMessage("stat", func() server.Message { return &statMessage{} })
-	srv.DefaultMessageFunc = handleDefault
+	srv := &server.Server{
+		TimeBetweenPings:  viper.GetDuration("server.timeBetweenPings") * time.Second,
+		PingsUntilTimeout: viper.GetInt("server.pingsUntilTimeout"),
+		MOTD:              strings.TrimSpace(motd),
+		StatsPassword:     viper.GetString("server.statsPassword"),
+		Log:               log,
+	}
 
 	bindAddr := viper.GetString("server.bind")
 	certFile := os.ExpandEnv(viper.GetString("tls.certFile"))
@@ -83,94 +75,4 @@ func runServer(cmd *cobra.Command, args []string) {
 	} else {
 		log.Fatal(srv.ListenAndServe(bindAddr))
 	}
-}
-
-func handleConnected(c *server.Client) {
-	nc := &nvremoted.Client{
-		ID:   c.ID,
-		Send: c.Send,
-	}
-	if err := nvrd.AddClient(nc); err != nil {
-		log.WithFields(logrus.Fields{
-			"server_client":    c,
-			"nvremoted_client": nc,
-			"error":            err,
-		}).Warn("Error adding client to the NVRemoted service")
-	}
-}
-
-func handleDisconnected(c *server.Client) {
-	nvrd.Kick(c.ID, c.StoppedReason)
-}
-
-// joinMessage is sent when a client wants to join a channel.
-type joinMessage struct {
-	model.DefaultMessage
-	Channel        string `json:"channel"`
-	ConnectionType string `json:"connection_type"`
-}
-
-func (msg joinMessage) Handle(c *server.Client) {
-	if msg.Channel == "" {
-		c.Send <- model.NewErrorMessage("No channel name")
-		return
-	}
-	if msg.ConnectionType == "" {
-		c.Send <- model.NewErrorMessage("No connection type")
-		return
-	}
-
-	if err := nvrd.JoinChannel(msg.Channel, msg.ConnectionType, c.ID); err != nil {
-		c.Send <- model.NewErrorMessage(err.Error())
-	}
-}
-
-// handleDefault handles unknown messages.
-func handleDefault(c *server.Client, msg server.DefaultMessage) {
-	if err := nvrd.Send(c.ID, nvremoted.ChannelMessage(msg)); err != nil {
-		c.Send <- model.NewErrorMessage(err.Error())
-	}
-}
-
-// protocolVersionMessage does nothing for now; prevents clients who send it from getting an error.
-type protocolVersionMessage struct {
-	model.DefaultMessage
-	Version int `json:"version"`
-}
-
-func (msg protocolVersionMessage) Handle(c *server.Client) {
-}
-
-// A statMessage is used to get stats from NVRemoted.
-type statMessage struct {
-	model.DefaultMessage
-	Password string `json:"password"`
-}
-
-func (msg statMessage) Handle(c *server.Client) {
-	if msg.Password == "" {
-		c.Send <- model.NewErrorMessage("No password provided")
-		nvrd.Kick(c.ID, "Bad request")
-		return
-	}
-
-	statsPassword := viper.GetString("server.statsPassword")
-	if msg.Password != statsPassword {
-		c.Send <- model.NewErrorMessage("Invalid password")
-		nvrd.Kick(c.ID, "Bad request")
-		return
-	}
-
-	stats := nvrd.Stats()
-	c.Send <- statsMessage{
-		DefaultMessage: model.DefaultMessage{Type: "stats"},
-		Stats:          stats,
-	}
-	nvrd.Kick(c.ID, "Request completed")
-}
-
-// A StatsMessage is sent to clients that requested stats.
-type statsMessage struct {
-	model.DefaultMessage
-	Stats nvremoted.Stats `json:"stats"`
 }

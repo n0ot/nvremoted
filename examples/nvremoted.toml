@@ -34,9 +34,6 @@ statsPassword = ""
 # Use an empty file or leave this option unset to disable the MOTD.
 motdFile = "$CONFDIR/motd"
 
-# warnIfNotEncrypted if true, warns clients if they are not using end to end encryption.
-warnIfNotEncrypted = true
-
 # Options for tls (ssl)
 [tls]
 # useTls = true # Enables tls. Required for NVDA Remote
