@@ -24,6 +24,9 @@ var RootCmd = &cobra.Command{
 
 This application relays messages for NVDA Remote clients,
 and prints usage stats for other NVRemoted servers.`,
+	SilenceErrors:     true,
+	SilenceUsage:      true,
+	DisableAutoGenTag: true,
 }
 
 // Execute adds all child commands to the root command and sets flags appropriately.
