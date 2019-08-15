@@ -41,7 +41,6 @@ func init() {
 	startCmd.Flags().BoolVarP(&disableTLS, "disable-tls", "d", false, "Overrides config option to enable TLS")
 
 	viper.SetDefault("server.statsPassword", "")
-	viper.SetDefault("nvremoted.warnIfNotEncrypted", true)
 	viper.SetDefault("tls.useTls", true)
 }
 
