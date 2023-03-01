@@ -1,20 +1,36 @@
 module github.com/n0ot/nvremoted
 
-go 1.12
+go 1.19
 
 require (
-	github.com/bettercap/bettercap v2.24.1+incompatible
-	github.com/bettercap/readline v0.0.0-20180208083827-9cec905dd291 // indirect
-	github.com/dustin/go-humanize v1.0.0 // indirect
-	github.com/evilsocket/islazy v1.10.4 // indirect
-	github.com/google/gopacket v1.1.17 // indirect
-	github.com/howeyc/gopass v0.0.0-20170109162249-bf9dde6d0d2c
-	github.com/magefile/mage v1.8.0
-	github.com/malfunkt/iprange v0.9.0 // indirect
-	github.com/mdlayher/dhcp6 v0.0.0-20190311162359-2a67805d7d0b // indirect
+	github.com/howeyc/gopass v0.0.0-20210920133722-c8aef6fb66ef
+	github.com/magefile/mage v1.14.0
 	github.com/mitchellh/go-homedir v1.1.0
-	github.com/pkg/errors v0.8.1
-	github.com/sirupsen/logrus v1.4.2
-	github.com/spf13/cobra v0.0.5
-	github.com/spf13/viper v1.4.0
+	github.com/pkg/errors v0.9.1
+	github.com/sirupsen/logrus v1.9.0
+	github.com/spf13/cobra v1.6.1
+	github.com/spf13/viper v1.15.0
+)
+
+require (
+	github.com/fsnotify/fsnotify v1.6.0 // indirect
+	github.com/hashicorp/hcl v1.0.0 // indirect
+	github.com/inconshreveable/mousetrap v1.1.0 // indirect
+	github.com/konsorten/go-windows-terminal-sequences v1.0.3 // indirect
+	github.com/magiconair/properties v1.8.7 // indirect
+	github.com/mitchellh/mapstructure v1.5.0 // indirect
+	github.com/pelletier/go-toml v1.9.5 // indirect
+	github.com/pelletier/go-toml/v2 v2.0.7 // indirect
+	github.com/spf13/afero v1.9.4 // indirect
+	github.com/spf13/cast v1.5.0 // indirect
+	github.com/spf13/jwalterweatherman v1.1.0 // indirect
+	github.com/spf13/pflag v1.0.5 // indirect
+	github.com/subosito/gotenv v1.4.2 // indirect
+	golang.org/x/crypto v0.6.0 // indirect
+	golang.org/x/sys v0.5.0 // indirect
+	golang.org/x/term v0.5.0 // indirect
+	golang.org/x/text v0.7.0 // indirect
+	gopkg.in/ini.v1 v1.67.0 // indirect
+	gopkg.in/yaml.v2 v2.4.0 // indirect
+	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
