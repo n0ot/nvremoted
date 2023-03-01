@@ -1,4 +1,4 @@
-// Copyright © 2019 Niko Carpenter <nikoacarpenter@gmail.com>
+// Copyright © 2023 Niko Carpenter <niko@nikocarpenter.com>
 //
 // This source code is governed by the MIT license, which can be found in the LICENSE file.
 
