@@ -152,6 +152,7 @@ func init() {
 	}
 	clientMessageHandlers["stat"] = handleClientStatMessage
 
+	clientEventHandlers["ping"] = handleClientPingEvent
 	clientEventHandlers["channel_message"] = handleClientChannelEvent
 	clientEventHandlers["joined_channel"] = handleClientJoinEvent
 	clientEventHandlers["left_channel"] = handleClientLeaveEvent
@@ -279,6 +280,10 @@ func handleClientChannelMessage(c *client, msg Message) {
 	}
 
 	c.channel.messages <- *channelMSG
+}
+
+func handleClientPingEvent(c *client, _ Message) {
+	c.send(GenericClientResponse{Type: "ping"})
 }
 
 func handleClientChannelEvent(c *client, msg Message) {
