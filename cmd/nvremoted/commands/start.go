@@ -36,7 +36,7 @@ func init() {
 	viper.BindPFlag("server.bind", startCmd.Flags().Lookup("bind"))
 	startCmd.Flags().IntP("time-between-pings", "t", 30, "How often pings should be sent in seconds (0 disables)")
 	viper.BindPFlag("server.timeBetweenPings", startCmd.Flags().Lookup("time-between-pings"))
-	startCmd.Flags().IntP("pings-until-timeout", "p", 2, "Number of pings that can pass before inactive clients are dropped (0 disables timeout)")
+	startCmd.Flags().IntP("pings-until-timeout", "p", 0, "Deprecated: accepted for compatibility, ignored (clients do not acknowledge pings)")
 	viper.BindPFlag("server.pingsUntilTimeout", startCmd.Flags().Lookup("pings-until-timeout"))
 	startCmd.Flags().BoolVarP(&disableTLS, "disable-tls", "d", false, "Overrides config option to enable TLS")
 

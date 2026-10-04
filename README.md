@@ -1,5 +1,18 @@
 NVRemoted is an implementation of the [NVDA Remote][] server in Go.
 
+`server.timeBetweenPings` controls server ping delivery only (seconds; 0 disables
+pings). NVDA Remote clients do not acknowledge these pings, so valid idle
+connections are allowed. `server.pingsUntilTimeout` and `--pings-until-timeout`
+are deprecated and ignored, including existing nonzero values. They no longer
+impose an inactivity timeout.
+
+TCP keepalive is enabled for both TCP and TLS connections independently of
+these settings, with a 15-second idle period. Probe intervals, retry counts,
+and the time to detect a lost peer depend on the listener and operating system;
+this is not a 15-second disconnect timeout. Transport errors and disconnects
+stop the client and remove its channel membership. Keepalive cannot detect a
+stalled client application while its operating system still responds to TCP.
+
 To use:
 
 * `go install github.com/n0ot/nvremoted/cmd/nvremoted`

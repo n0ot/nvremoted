@@ -23,8 +23,9 @@ type Server struct {
 	// If 0, no pings will be sent.
 	TimeBetweenPings time.Duration
 
-	// PingsUntilTimeout specifies the number of pings to be sent before unresponsive clients will be kicked.
-	// If TimeBetweenPings is 0, this field has no effect.
+	// PingsUntilTimeout is retained for compatibility with existing configurations.
+	// Deprecated: ignored because NVDA Remote clients do not acknowledge pings.
+	// Idle connections are allowed; TCP keepalive detects dead peers independently.
 	PingsUntilTimeout int
 
 	// TLSConfig optionally provides a TLS configuration for use by ListenAndServeTLS.
@@ -95,9 +96,8 @@ func (srv *Server) acceptClients(listener net.Listener) {
 			}).Error("Error accepting connection")
 			continue
 		}
-		if tcpConn, ok := conn.(*net.TCPConn); ok {
-			tcpConn.SetKeepAlive(true)
-			tcpConn.SetKeepAlivePeriod(srv.TimeBetweenPings)
+		if err := configureTCPKeepAlive(conn); err != nil {
+			srv.Log.WithError(err).Warn("Error configuring TCP keepalive")
 		}
 
 		remoteAddr, _, err := net.SplitHostPort(conn.RemoteAddr().String())

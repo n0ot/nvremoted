@@ -9,7 +9,6 @@ import (
 	"io"
 	"net"
 	"sync"
-	"time"
 
 	"github.com/sirupsen/logrus"
 )
@@ -43,7 +42,7 @@ func (srv *Server) serveClient(conn net.Conn, id uint64, remoteHost string) {
 		log:      srv.Log,
 	}
 
-	// Only when both readFromClient and handleClient are finished will conn be closed.
+	// Wait for both goroutines before removing channel and registry state.
 	finished := make(chan struct{}, 2)
 
 	srv.Log.WithFields(logrus.Fields{
@@ -84,20 +83,11 @@ func (srv *Server) readFromClient(c *client, finished chan<- struct{}) {
 		finished <- struct{}{}
 	}()
 
-	// readDeadline is the total amount of time that may pass before a client is timed out, if nothing is received.
-	// If PingsUntilTimeout is 0, the client will never time out.
-	readDeadline := srv.TimeBetweenPings * time.Duration(srv.PingsUntilTimeout)
-	if readDeadline == 0 {
-		// If PingsUntilTimeout is not 0, but no pings are to be sent,
-		// idle clients will time out after a minute.
-		// If PingsUntilTimeout is 0, clients will not time out, but it is still necessary to unblock at least once per minute,
-		// to allow this function to return when handleClient stops.
-		readDeadline = time.Minute
-	}
+	// NVDA Remote clients do not acknowledge server pings. Silence is valid;
+	// transport errors detect dead peers, and stop closes the socket to unblock us.
 	dec := json.NewDecoder(c.conn)
 
 	for !c.isStopped() {
-		c.conn.SetReadDeadline(time.Now().Add(readDeadline))
 		msg, err := unmarshalClientMessage(c.id, dec)
 		// handleClient could have finished while the above read was blocking.
 		if err == nil {
@@ -110,18 +100,11 @@ func (srv *Server) readFromClient(c *client, finished chan<- struct{}) {
 			continue
 		}
 
-		if err == io.EOF {
-			c.stop("Client disconnected")
+		if c.isStopped() {
 			return
 		}
-		if terr, ok := err.(net.Error); ok && terr.Timeout() {
-			if srv.PingsUntilTimeout == 0 {
-				// No timeout enforcement.
-				// Decoder breaks if it returns an error; reinitialize.
-				dec = json.NewDecoder(c.conn)
-				continue
-			}
-			c.stop("Client timed out")
+		if err == io.EOF {
+			c.stop("Client disconnected")
 			return
 		}
 		if _, ok := err.(*json.UnmarshalTypeError); ok {
@@ -191,9 +174,16 @@ func (srv *Server) handleClient(c *client, finished chan<- struct{}) {
 // This method is safe to use concurrently.
 func (c *client) stop(reason string) {
 	c.stopMTX.Lock()
+	if c.stopped {
+		c.stopMTX.Unlock()
+		return
+	}
 	c.stopped = true
 	c.stopReason = reason
 	c.stopMTX.Unlock()
+
+	// Wake blocked reads and writes so cleanup does not need an idle timeout.
+	c.conn.Close()
 }
 
 // isStopped checks to see if a client is stopped.

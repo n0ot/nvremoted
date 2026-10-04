@@ -13,12 +13,12 @@
 bind = "127.0.0.1:6837"
 
 # timeBetweenPings specifies how often clients should be pinged.
-# Pings are sent as newlines, which some clients cannot handle.
+# Clients do not have to reply to server pings.
 # Set to 0 if you don't want to send pings.
 #
-# pingsUntilTimeout specifies how many pings can be sent to a client before it is kicked do to inactivity.
-# Set to 0 if you don't want to kick inactive clients.
-# This does not affect keep-alive timeout.
+# pingsUntilTimeout is deprecated and ignored, including existing nonzero values.
+# Correct idle connections are allowed because NVDA Remote has no ping acknowledgement.
+# TCP keepalive detects dead peers independently, including when timeBetweenPings is 0.
 timeBetweenPings = 0
 pingsUntilTimeout = 0
 
